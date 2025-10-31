@@ -26,3 +26,11 @@ qwen-vl-utils
 torchvision
 inflect
 jsonlines
+# === Amplify-LMS backend dependencies ===
+fastapi
+uvicorn[standard]
+python-multipart
+sqlmodel
+pydantic-settings
+ffmpeg-python
+openai-whisper  # or whisper (use the one you installed manually)
