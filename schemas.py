@@ -1,27 +1,45 @@
 # schemas.py
+# ==========================================================
+# Pydantic schemas for Amplify-LMS
+# Matches SQLModel models (User ↔ Assignment ↔ Response)
+# ==========================================================
+
 from pydantic import BaseModel
-from typing import Any, Dict
+from typing import Any, Dict, Optional, List
 from datetime import datetime
 
-# ---------- Assignment Schemas ----------
 
+# ---------------------- User Schemas ----------------------
+class UserBase(BaseModel):
+    id: str
+    name: str
+    email: str
+    role: str = "teacher"
+
+    class Config:
+        orm_mode = True
+
+
+# ---------------------- Assignment Schemas ----------------------
 class AssignmentCreate(BaseModel):
     title: str
-    description: str | None = None
-    dueDate: str | None = None
+    description: Optional[str] = None
+    dueDate: Optional[str] = None
     isQuiz: bool = False
+    assignmentTimeLimit: Optional[int] = None  # ✅ new field
     questions: Dict[str, Any] | list
+    owner_id: Optional[str] = None             # ✅ new field (teacher’s ID)
 
 
 class AssignmentOut(AssignmentCreate):
     id: str
+    owner: Optional[UserBase] = None           # ✅ include owner info if needed
 
     class Config:
         orm_mode = True   # allows direct DB-to-JSON conversion
 
 
-# ---------- Response Schemas ----------
-
+# ---------------------- Response Schemas ----------------------
 class ResponseCreate(BaseModel):
     assignment_id: str
     studentName: str
@@ -32,9 +50,8 @@ class ResponseCreate(BaseModel):
 
 class ResponseOut(ResponseCreate):
     id: str
-    submittedAt: datetime   # changed from str → datetime
-    grade: float | None = None
+    submittedAt: datetime
+    grade: Optional[float] = None
 
     class Config:
-        orm_mode = True     # FastAPI auto-serializes datetime
-
+        orm_mode = True

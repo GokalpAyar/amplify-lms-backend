@@ -1,36 +1,17 @@
-langchain
-langchain-community
-langchain-core
-langchain-openai
-langchain-deepseek
-langchain-huggingface
-langchain-ollama
-transformers
-sentence-transformers
-python-docx
-pandas
-numpy
-streamlit
-python-dotenv
-torch
-pyspellchecker
-textblob
-spacy
-SpeechRecognition
-pyaudio
-pyttsx3
-sounddevice 
-pypdf
-pdf2image
-qwen-vl-utils
-torchvision
-inflect
-jsonlines
-# === Amplify-LMS backend dependencies ===
-fastapi
-uvicorn[standard]
-python-multipart
-sqlmodel
-pydantic-settings
-ffmpeg-python
-openai-whisper  # or whisper (use the one you installed manually)
+# === Core Backend ===
+fastapi==0.104.0
+uvicorn[standard]==0.24.0
+sqlmodel==0.0.14
+python-multipart==0.0.6
+python-dotenv==1.0.0
+
+# === Authentication ===
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# === Speech-to-Text (KEEP THIS!) ===
+openai-whisper==20231117
+ffmpeg-python==0.2.0
+
+# === Database ===
+psycopg2-binary==2.9.7
