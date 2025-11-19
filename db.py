@@ -13,15 +13,13 @@ from sqlmodel import Session, create_engine
 _BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(dotenv_path=_BASE_DIR / ".env")
 
-_SQLITE_PATH = _BASE_DIR / "amplify.db"
-
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
-    # Local fallback keeps developer experience simple while production uses DATABASE_URL.
-    DATABASE_URL = f"sqlite:///{_SQLITE_PATH}"
-    # Mirror the computed value for any downstream code that reads directly from the environment.
-    os.environ.setdefault("DATABASE_URL", DATABASE_URL)
+    raise RuntimeError(
+        "DATABASE_URL environment variable is not set. "
+        "Set DATABASE_URL to your database connection string before starting the API.",
+    )
 
 engine_config: dict[str, object] = {
     "echo": False,

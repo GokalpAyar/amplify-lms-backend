@@ -3,13 +3,16 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlmodel import SQLModel
 
+from db import engine
 from routes import assignments, auth, responses, speech
 
 _BASE_DIR = Path(__file__).resolve().parent
@@ -17,6 +20,7 @@ load_dotenv(dotenv_path=_BASE_DIR / ".env")
 
 DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() in {"1", "true", "yes", "on"}
 
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Amplify LMS Backend",
@@ -24,12 +28,16 @@ app = FastAPI(
     version="1.0.0",
 )
 
+cors_kwargs = {
+    "allow_origins": ["*"] if DEMO_MODE else ["*"],
+    "allow_credentials": False,
+    "allow_methods": ["*"] if DEMO_MODE else ["*"],
+    "allow_headers": ["*"] if DEMO_MODE else ["*"],
+}
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    **cors_kwargs,
 )
 
 app.include_router(auth.router)
@@ -41,6 +49,13 @@ if not DEMO_MODE:
     from routes import users  # imported lazily to avoid unused dependency in demo mode
 
     app.include_router(users.router)
+
+
+@app.on_event("startup")
+def init_database() -> None:
+    """Ensure tables exist before API starts accepting requests."""
+    logger.info("Ensuring SQLModel metadata is applied (demo_mode=%s)", DEMO_MODE)
+    SQLModel.metadata.create_all(engine)
 
 
 @app.get("/health")

@@ -4,6 +4,8 @@
 # Demo mode removes JWT requirements for easier testing.
 # ==========================================================
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
@@ -14,6 +16,8 @@ from schemas import AssignmentCreate, AssignmentOut
 # ----------------------------------------------------------
 # Router setup
 # ----------------------------------------------------------
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/assignments", tags=["assignments"])
 
 # ----------------------------------------------------------
@@ -27,14 +31,25 @@ def create_assignment(
 ):
     """Create a new assignment (owner_id optional in demo mode)."""
 
-    data = payload.model_dump(exclude_none=True)
-    assignment = Assignment(**data)
+    try:
+        data = payload.model_dump(exclude_none=True)
+        assignment = Assignment(**data)
 
-    session.add(assignment)
-    session.commit()
-    session.refresh(assignment)
+        session.add(assignment)
+        session.commit()
+        session.refresh(assignment)
 
-    return assignment
+        return assignment
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        logger.exception("Failed to create assignment titled '%s'", payload.title)
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to create assignment right now.",
+        ) from exc
 
 
 # ----------------------------------------------------------
