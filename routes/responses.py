@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
 from db import get_session
-from models import Assignment, Response, User
-from routes.assignments import get_current_user
+from models import Assignment, Response
 from schemas import ResponseCreate, ResponseOut
 
 logger = logging.getLogger(__name__)
@@ -65,37 +64,41 @@ def create_response(
 
 @router.get("/")
 def list_responses(
+    owner_id: str | None = Query(
+        default=None,
+        description="Optionally filter responses by assignment owner_id.",
+    ),
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
 ):
-    """Get only responses to the current instructor's assignments."""
+    """List responses, optionally filtering by instructor owner_id (demo mode)."""
 
-    instructor_assignments = session.exec(
-        select(Assignment).where(Assignment.owner_id == current_user.id)
-    ).all()
+    stmt = select(Response)
 
-    assignment_ids = [assignment.id for assignment in instructor_assignments]
+    if owner_id:
+        assignment_ids = [
+            assignment.id
+            for assignment in session.exec(
+                select(Assignment).where(Assignment.owner_id == owner_id)
+            ).all()
+        ]
 
-    if not assignment_ids:
-        return []
+        if not assignment_ids:
+            return []
 
-    responses = session.exec(
-        select(Response).where(Response.assignment_id.in_(assignment_ids))
-    ).all()
+        stmt = stmt.where(Response.assignment_id.in_(assignment_ids))
 
-    return responses
+    return session.exec(stmt).all()
 
 
 @router.get("/{assignment_id}")
 def get_responses_for_assignment(
     assignment_id: str,
     session: Session = Depends(get_session),
-    current_user: User = Depends(get_current_user),
 ):
-    """Get responses for a specific assignment when owned by current instructor."""
+    """Get responses for a specific assignment (no authentication required)."""
 
     assignment = session.get(Assignment, assignment_id)
-    if not assignment or assignment.owner_id != current_user.id:
+    if not assignment:
         raise HTTPException(status_code=404, detail="Assignment not found")
 
     responses = session.exec(
