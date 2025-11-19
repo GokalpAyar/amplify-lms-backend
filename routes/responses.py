@@ -23,43 +23,57 @@ def create_response(
 ):
     """Create a new student response (no authentication required for students)."""
 
-    logger.info(
-        "Received submission for assignment %s from %s",
-        payload.assignment_id,
-        payload.studentName,
-    )
-
-    assignment = session.get(Assignment, payload.assignment_id)
-    if not assignment:
-        logger.warning("Assignment not found: %s", payload.assignment_id)
-        raise HTTPException(status_code=404, detail="Assignment not found")
-
-    existing = session.exec(
-        select(Response).where(
-            Response.assignment_id == payload.assignment_id,
-            Response.jNumber == payload.jNumber,
+    try:
+        logger.info(
+            "Received submission for assignment %s from %s",
+            payload.assignment_id,
+            payload.studentName,
         )
-    ).first()
 
-    if existing:
-        logger.warning("Duplicate submission detected for %s", payload.jNumber)
+        assignment = session.get(Assignment, payload.assignment_id)
+        if not assignment:
+            logger.warning("Assignment not found: %s", payload.assignment_id)
+            raise HTTPException(status_code=404, detail="Assignment not found")
+
+        existing = session.exec(
+            select(Response).where(
+                Response.assignment_id == payload.assignment_id,
+                Response.jNumber == payload.jNumber,
+            )
+        ).first()
+
+        if existing:
+            logger.warning("Duplicate submission detected for %s", payload.jNumber)
+            raise HTTPException(
+                status_code=400,
+                detail="You have already submitted this assignment",
+            )
+
+        response = Response(**payload.model_dump())
+        session.add(response)
+        session.commit()
+        session.refresh(response)
+
+        logger.info(
+            "Submission stored for assignment %s (%s)",
+            payload.assignment_id,
+            payload.studentName,
+        )
+
+        return response
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        logger.exception(
+            "Failed to store submission for assignment %s",
+            payload.assignment_id,
+        )
         raise HTTPException(
-            status_code=400,
-            detail="You have already submitted this assignment",
-        )
-
-    response = Response(**payload.model_dump())
-    session.add(response)
-    session.commit()
-    session.refresh(response)
-
-    logger.info(
-        "Submission stored for assignment %s (%s)",
-        payload.assignment_id,
-        payload.studentName,
-    )
-
-    return response
+            status_code=500,
+            detail="Unable to store response right now.",
+        ) from exc
 
 
 @router.get("/")
