@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from dotenv import load_dotenv
 from sqlmodel import Session, create_engine
@@ -13,6 +14,29 @@ from sqlmodel import Session, create_engine
 _BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(dotenv_path=_BASE_DIR / ".env")
 
+def _normalize_database_url(url: str) -> str:
+    """Guarantee Supabase/Postgres URLs include the SSL flag Render requires."""
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return url
+
+    scheme = parsed.scheme.lower()
+    if not scheme.startswith("postgresql"):
+        return url
+
+    hostname = (parsed.hostname or "").lower()
+    query = parse_qs(parsed.query, keep_blank_values=True)
+
+    requires_ssl = hostname.endswith(".supabase.co") or hostname.endswith(".supabase.com")
+    if requires_ssl and "sslmode" not in query:
+        query["sslmode"] = ["require"]
+        parsed = parsed._replace(query=urlencode(query, doseq=True))
+        return urlunparse(parsed)
+
+    return url
+
+
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
@@ -20,6 +44,8 @@ if not DATABASE_URL:
         "DATABASE_URL environment variable is not set. "
         "Set DATABASE_URL to your database connection string before starting the API.",
     )
+
+DATABASE_URL = _normalize_database_url(DATABASE_URL)
 
 engine_config: dict[str, object] = {
     "echo": False,
