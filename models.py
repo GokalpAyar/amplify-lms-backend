@@ -122,7 +122,6 @@ class Response(SQLModel, table=True):
             ForeignKey("assignment.id", ondelete="CASCADE"),
             nullable=False,
         ),
-        index=True,
     )
     studentName: str
     jNumber: str
