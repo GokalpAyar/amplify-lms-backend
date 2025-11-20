@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
 from db import get_session
-from models import Assignment
+from models import Assignment, Response
 from schemas import AssignmentCreate, AssignmentOut
 
 # ----------------------------------------------------------
@@ -80,6 +80,40 @@ def list_assignments(
     if owner_id:
         stmt = stmt.where(Assignment.owner_id == owner_id)
     return session.exec(stmt).all()
+
+
+# ----------------------------------------------------------
+# DELETE /assignments/{assignment_id}
+# Instructor removes assignment + its responses
+# ----------------------------------------------------------
+@router.delete("/{assignment_id}")
+def delete_assignment(assignment_id: str, session: Session = Depends(get_session)):
+    assignment = session.get(Assignment, assignment_id)
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    try:
+        responses = session.exec(
+            select(Response).where(Response.assignment_id == assignment_id)
+        ).all()
+
+        for response in responses:
+            session.delete(response)
+
+        session.delete(assignment)
+        session.commit()
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        logger.exception("Failed to delete assignment '%s'", assignment_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to delete assignment right now.",
+        ) from exc
+
+    return {"message": "Assignment and associated responses deleted successfully"}
 
 
 # ----------------------------------------------------------
