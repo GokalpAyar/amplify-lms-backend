@@ -121,6 +121,7 @@ class Response(SQLModel, table=True):
             String,
             ForeignKey("assignment.id", ondelete="CASCADE"),
             nullable=False,
+            index=True,
         ),
     )
     studentName: str
