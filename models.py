@@ -52,6 +52,7 @@ class User(SQLModel, table=True):
 
     # Relationship: one instructor → many assignments
     assignments: List["Assignment"] = Relationship(back_populates="owner")
+    drafts: List["AssignmentDraft"] = Relationship(back_populates="owner")
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -79,6 +80,26 @@ class Assignment(SQLModel, table=True):
 
     # Relationship to student responses
     responses: List["Response"] = Relationship(back_populates="assignment")
+
+    model_config = {"arbitrary_types_allowed": True}
+
+
+# ---------------------- Assignment Draft Model ----------------------
+class AssignmentDraft(SQLModel, table=True):
+    """
+    Stores in-progress assignments so instructors don't lose work mid-creation.
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    title: Optional[str] = None
+    description: Optional[str] = None
+    questions: dict | list | None = Field(default=None, sa_column=Column(JSON))
+
+    owner_id: str = Field(foreign_key="user.id", index=True)
+    owner: Optional[User] = Relationship(back_populates="drafts")
+
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
     model_config = {"arbitrary_types_allowed": True}
 
