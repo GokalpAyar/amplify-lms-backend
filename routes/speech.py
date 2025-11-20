@@ -36,22 +36,17 @@ def _get_client() -> OpenAI:
 
 def _resolve_model_name() -> str:
     """
-    Support the historical `OPENAI_WHISPER_MODEL` name as well as the Render
-    dashboard’s `OPENAI_WHISPER` variable. Defaults to OpenAI’s current
-    low-latency model.
+    Resolve the Whisper model name from the supported environment variables,
+    defaulting to OpenAI's Whisper API (`whisper-1`) when none are set.
     """
 
     for env_key in _WHISPER_ENV_KEYS:
         raw_value = os.getenv(env_key)
         if raw_value:
-            value = raw_value.strip()
-            if value.lower() == "gpt-40-mini-transcribe":
-                # Common typo: use the official model slug that contains "4o".
-                return "gpt-4o-mini-transcribe"
-            return value
+            return raw_value.strip()
 
-    # Fall back to OpenAI's Whisper v3.1 (low latency) tier.
-    return "gpt-4o-mini-transcribe"
+    # Fall back to the canonical Whisper model supported by OpenAI.
+    return "whisper-1"
 
 
 def _normalize_transcription_result(transcription: object) -> str:
