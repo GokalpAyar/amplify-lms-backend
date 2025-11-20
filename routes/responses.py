@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -12,8 +13,8 @@ from sqlmodel import Session, select
 from starlette.datastructures import FormData
 
 from db import get_session
-from models import Assignment, Response
-from schemas import ResponseCreate, ResponseOut
+from models import Assignment, Response, AccuracyRating
+from schemas import AccuracyRatingOut, AccuracyRatingPayload, ResponseCreate, ResponseOut
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +127,52 @@ def get_responses_for_assignment(
     return responses
 
 
+@router.post("/{response_id}/accuracy-rating", response_model=AccuracyRatingOut)
+def upsert_accuracy_rating(
+    response_id: str,
+    payload: AccuracyRatingPayload,
+    session: Session = Depends(get_session),
+):
+    """Create or update the transcription accuracy rating for a response."""
+
+    response = session.get(Response, response_id)
+    if not response:
+        raise HTTPException(status_code=404, detail="Response not found")
+
+    rating_record = session.exec(
+        select(AccuracyRating).where(AccuracyRating.response_id == response_id)
+    ).first()
+
+    try:
+        if rating_record:
+            rating_record.rating = payload.rating
+            rating_record.bias_notes = payload.bias_notes
+            rating_record.needs_review = payload.needs_review
+            rating_record.updated_at = datetime.utcnow()
+        else:
+            rating_record = AccuracyRating(
+                response_id=response_id,
+                rating=payload.rating,
+                bias_notes=payload.bias_notes,
+                needs_review=payload.needs_review,
+            )
+            session.add(rating_record)
+
+        session.commit()
+        session.refresh(rating_record)
+        return rating_record
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        logger.exception("Failed to save accuracy rating for %s: %s", response_id, exc)
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to save accuracy rating right now.",
+        ) from exc
+
+
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
@@ -163,6 +210,12 @@ def _payload_from_form(form: FormData) -> dict[str, Any]:
         "jNumber": _first_match(form, "jNumber", "j_number"),
         "answers": _parse_json_field(answers_raw, "answers"),
         "transcripts": _parse_json_field(transcripts_raw, "transcripts"),
+        "audio_file_url": _first_match(
+            form,
+            "audio_file_url",
+            "audioFileUrl",
+            "audio_url",
+        ),
     }
     return data
 
