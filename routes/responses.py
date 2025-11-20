@@ -50,7 +50,17 @@ _ALLOWED_EXTENSIONS = {
     ".ogg",
     ".oga",
 }
-_DEFAULT_MAX_AUDIO_BYTES = 25 * 1024 * 1024  # 25 MB default cap
+
+
+def _resolve_max_audio_bytes() -> int:
+    """
+    Resolve the maximum audio file size from environment variables.
+    Defaults to 10MB (10 * 1024 * 1024 bytes) for audio uploads.
+    """
+    max_size_mb = int(os.getenv("MAX_AUDIO_SIZE_MB", "10"))
+    return max_size_mb * 1024 * 1024  # Convert MB to bytes
+
+
 _MAX_AUDIO_BYTES = _resolve_max_audio_bytes()
 _MAX_AUDIO_MB = round(_MAX_AUDIO_BYTES / (1024 * 1024), 2)
 
@@ -363,28 +373,6 @@ async def _read_and_validate_audio(
         "content_type": mime or "application/octet-stream",
         "extension": extension or None,
     }
-
-
-def _resolve_max_audio_bytes() -> int:
-    raw_bytes = os.getenv("RESPONSE_AUDIO_MAX_BYTES")
-    if raw_bytes:
-        try:
-            value = int(raw_bytes)
-            if value > 0:
-                return value
-        except ValueError:
-            logger.warning("Invalid RESPONSE_AUDIO_MAX_BYTES=%s. Using default.", raw_bytes)
-
-    raw_mb = os.getenv("RESPONSE_AUDIO_MAX_MB")
-    if raw_mb:
-        try:
-            mb_value = float(raw_mb)
-            if mb_value > 0:
-                return int(mb_value * 1024 * 1024)
-        except ValueError:
-            logger.warning("Invalid RESPONSE_AUDIO_MAX_MB=%s. Using default.", raw_mb)
-
-    return _DEFAULT_MAX_AUDIO_BYTES
 
 
 def _normalize_mime(mime: str | None) -> str:
