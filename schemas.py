@@ -4,7 +4,7 @@
 # Matches SQLModel models (User ↔ Assignment ↔ Response)
 # ==========================================================
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Any, Dict, Optional, List
 from datetime import datetime
 
@@ -75,12 +75,29 @@ class ResponseCreate(BaseModel):
     jNumber: str
     answers: Dict[str, Any]
     transcripts: Dict[str, Any]
+    audio_file_url: Optional[str] = None
 
 
 class ResponseOut(ResponseCreate):
     id: str
     submittedAt: datetime
     grade: Optional[float] = None
+
+    class Config:
+        orm_mode = True
+
+
+class AccuracyRatingPayload(BaseModel):
+    rating: int = Field(ge=1, le=5)
+    bias_notes: Optional[str] = None
+    needs_review: bool = False
+
+
+class AccuracyRatingOut(AccuracyRatingPayload):
+    id: str
+    response_id: str
+    created_at: datetime
+    updated_at: datetime
 
     class Config:
         orm_mode = True

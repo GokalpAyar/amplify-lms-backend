@@ -10,6 +10,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import inspect, text
 from sqlmodel import SQLModel
 
 from db import engine
@@ -56,6 +57,21 @@ def init_database() -> None:
     """Ensure tables and columns exist before serving traffic."""
     logger.info("Ensuring SQLModel metadata is up to date (demo_mode=%s)", DEMO_MODE)
     SQLModel.metadata.create_all(engine)
+    _ensure_response_audio_column()
+
+
+def _ensure_response_audio_column() -> None:
+    """Add audio_file_url to response table when missing (for legacy databases)."""
+    try:
+        with engine.begin() as connection:
+            inspector = inspect(connection)
+            columns = {column["name"] for column in inspector.get_columns("response")}
+            if "audio_file_url" in columns:
+                return
+            logger.info("Adding missing audio_file_url column to response table.")
+            connection.execute(text("ALTER TABLE response ADD COLUMN audio_file_url VARCHAR"))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Unable to verify or add audio_file_url column: %s", exc)
 
 
 @app.get("/health")

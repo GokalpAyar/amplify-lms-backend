@@ -129,6 +129,7 @@ class Response(SQLModel, table=True):
     # Store answers and transcripts as JSON
     answers: dict = Field(sa_column=Column(JSON))
     transcripts: dict = Field(sa_column=Column(JSON))
+    audio_file_url: Optional[str] = None
 
     submittedAt: datetime = Field(default_factory=datetime.utcnow)
     grade: Optional[float] = None  # optional instructor-assigned grade
@@ -138,5 +139,29 @@ class Response(SQLModel, table=True):
         back_populates="responses",
         sa_relationship_kwargs={"passive_deletes": True},
     )
+
+    model_config = {"arbitrary_types_allowed": True}
+
+
+# ---------------------- Response Accuracy Rating ----------------------
+class AccuracyRating(SQLModel, table=True):
+    """
+    Stores transcription accuracy reviews keyed by response.
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+    response_id: str = Field(
+        sa_column=Column(
+            String,
+            ForeignKey("response.id", ondelete="CASCADE"),
+            nullable=False,
+            unique=True,
+        ),
+    )
+    rating: int = Field(default=5, ge=1, le=5)
+    bias_notes: Optional[str] = None
+    needs_review: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
 
     model_config = {"arbitrary_types_allowed": True}
