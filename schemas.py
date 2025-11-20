@@ -77,25 +77,10 @@ class ResponseCreate(BaseModel):
     transcripts: Dict[str, Any]
 
 
-class AudioMetadata(BaseModel):
-    file_url: Optional[str] = None
-    storage_path: Optional[str] = None
-    mime_type: Optional[str] = None
-    file_size: Optional[int] = None
-
-    class Config:
-        orm_mode = True
-
-
 class ResponseOut(ResponseCreate):
     id: str
     submittedAt: datetime
     grade: Optional[float] = None
-    audio_file_url: Optional[str] = None
-    audio_storage_path: Optional[str] = None
-    audio_mime_type: Optional[str] = None
-    audio_file_size: Optional[int] = None
-    audio_metadata: Optional[AudioMetadata] = None
 
     class Config:
         orm_mode = True
