@@ -10,7 +10,7 @@ Create `backend/.env` from `.env.example` and fill in the secrets (these same ke
 | --- | --- |
 | `DATABASE_URL` | Production connection string. When omitted the app falls back to `backend/amplify.db` (SQLite) for local dev. |
 | `OPENAI_API_KEY` | Server-side key for the Whisper API. **Never expose this in frontend code.** |
-| `OPENAI_WHISPER_MODEL` | Whisper model name (defaults to `whisper-1`). |
+| `OPENAI_WHISPER_MODEL` (or `OPENAI_WHISPER`) | Whisper / GPT-4o transcription model name (defaults to `gpt-4o-mini-transcribe`). |
 | `JWT_SECRET` | Secret used to sign JWTs. |
 | `FRONTEND_ORIGINS` | Comma-separated list of allowed origins for CORS (`https://your-vercel-app.vercel.app,https://localhost:5173`). |
 | `FRONTEND_ORIGIN_REGEX` (optional) | Regex variant when you must allow a wildcard domain. |
