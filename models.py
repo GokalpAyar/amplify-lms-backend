@@ -6,6 +6,7 @@
 # ==========================================================
 
 from sqlmodel import SQLModel, Field, Column, JSON, Relationship
+from sqlalchemy import ForeignKey, String
 from datetime import datetime
 from typing import List, Optional
 import uuid
@@ -79,7 +80,10 @@ class Assignment(SQLModel, table=True):
     owner: Optional[User] = Relationship(back_populates="assignments")
 
     # Relationship to student responses
-    responses: List["Response"] = Relationship(back_populates="assignment")
+    responses: List["Response"] = Relationship(
+        back_populates="assignment",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan", "passive_deletes": True},
+    )
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -112,7 +116,14 @@ class Response(SQLModel, table=True):
     """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
-    assignment_id: str = Field(foreign_key="assignment.id")
+    assignment_id: str = Field(
+        sa_column=Column(
+            String,
+            ForeignKey("assignment.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        index=True,
+    )
     studentName: str
     jNumber: str
 
@@ -128,6 +139,9 @@ class Response(SQLModel, table=True):
     audio_file_size: Optional[int] = None
 
     # Relationship back to Assignment
-    assignment: Optional[Assignment] = Relationship(back_populates="responses")
+    assignment: Optional[Assignment] = Relationship(
+        back_populates="responses",
+        sa_relationship_kwargs={"passive_deletes": True},
+    )
 
     model_config = {"arbitrary_types_allowed": True}
