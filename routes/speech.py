@@ -11,6 +11,12 @@ from openai import OpenAI, OpenAIError
 router = APIRouter(tags=["speech"])
 
 _client: OpenAI | None = None
+_WHISPER_ENV_KEYS = (
+    "OPENAI_WHISPER_MODEL",
+    "OPENAI_WHISPER",
+    "WHISPER_MODEL",
+)
+_AUDIO_EXTENSIONS = (".webm", ".wav", ".mp3", ".m4a", ".m4v", ".mp4")
 
 
 def _get_client() -> OpenAI:
@@ -28,9 +34,47 @@ def _get_client() -> OpenAI:
     return _client
 
 
+def _resolve_model_name() -> str:
+    """
+    Support the historical `OPENAI_WHISPER_MODEL` name as well as the Render
+    dashboard’s `OPENAI_WHISPER` variable. Defaults to OpenAI’s current
+    low-latency model.
+    """
+
+    for env_key in _WHISPER_ENV_KEYS:
+        raw_value = os.getenv(env_key)
+        if raw_value:
+            value = raw_value.strip()
+            if value.lower() == "gpt-40-mini-transcribe":
+                # Common typo: use the official model slug that contains "4o".
+                return "gpt-4o-mini-transcribe"
+            return value
+
+    # Fall back to OpenAI's Whisper v3.1 (low latency) tier.
+    return "gpt-4o-mini-transcribe"
+
+
+def _normalize_transcription_result(transcription: object) -> str:
+    """
+    `client.audio.transcriptions.create(response_format="text")` currently
+    returns a plain string, but older SDK builds return an object with a `.text`
+    attribute. Normalize both shapes to a trimmed string to keep the route
+    resilient to SDK upgrades.
+    """
+
+    if transcription is None:
+        return ""
+    if isinstance(transcription, str):
+        return transcription.strip()
+    text_attr = getattr(transcription, "text", "")
+    if isinstance(text_attr, str):
+        return text_attr.strip()
+    return ""
+
+
 async def _transcribe_upload(file: UploadFile) -> dict[str, str]:
     filename = (file.filename or "").lower()
-    if not filename.endswith((".webm", ".wav", ".mp3", ".m4a", ".m4v", ".mp4")):
+    if not filename.endswith(_AUDIO_EXTENSIONS):
         raise HTTPException(status_code=400, detail="Unsupported audio format")
 
     content = await file.read()
@@ -40,7 +84,7 @@ async def _transcribe_upload(file: UploadFile) -> dict[str, str]:
     audio_buffer = io.BytesIO(content)
     audio_buffer.name = file.filename or "audio.webm"
 
-    model_name = os.getenv("OPENAI_WHISPER_MODEL", "whisper-1")
+    model_name = _resolve_model_name()
 
     try:
         client = _get_client()
@@ -55,7 +99,7 @@ async def _transcribe_upload(file: UploadFile) -> dict[str, str]:
             detail=f"Transcription failed: {exc}",
         ) from exc
 
-    text = (transcription or "").strip()
+    text = _normalize_transcription_result(transcription)
     status = "success" if text else "empty"
 
     return {"transcription": text or "No speech detected in audio", "status": status}
