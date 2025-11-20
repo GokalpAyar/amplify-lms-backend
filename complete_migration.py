@@ -25,6 +25,23 @@ def migrate_database():
         except Exception as e:
             print(f"assignmentTimeLimit column may already exist: {e}")
         
+        for column, column_type in (
+            ("audio_storage_path", "TEXT"),
+            ("audio_file_url", "TEXT"),
+            ("audio_file_size", "BIGINT"),
+            ("audio_mime_type", "TEXT"),
+        ):
+            try:
+                session.execute(
+                    text(f"""
+                        ALTER TABLE response
+                        ADD COLUMN {column} {column_type}
+                    """)
+                )
+                print(f"✅ Added {column} column to response table")
+            except Exception as e:
+                print(f"{column} column may already exist: {e}")
+        
         session.commit()
 
 if __name__ == "__main__":
