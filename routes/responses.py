@@ -80,7 +80,7 @@ async def create_response(
         ) from exc
 
 
-@router.get("/")
+@router.get("/", response_model=list[ResponseOut])
 def list_responses(
     owner_id: str | None = Query(
         default=None,
@@ -105,10 +105,11 @@ def list_responses(
 
         stmt = stmt.where(Response.assignment_id.in_(assignment_ids))
 
-    return session.exec(stmt).all()
+    responses = session.exec(stmt).all()
+    return responses
 
 
-@router.get("/{assignment_id}")
+@router.get("/{assignment_id}", response_model=list[ResponseOut])
 def get_responses_for_assignment(
     assignment_id: str,
     session: Session = Depends(get_session),
