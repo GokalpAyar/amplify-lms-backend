@@ -81,9 +81,6 @@ class ResponseOut(ResponseCreate):
     id: str
     submittedAt: datetime
     grade: Optional[float] = None
-    audio_file_url: Optional[str] = None
-    audio_mime_type: Optional[str] = None
-    audio_file_size: Optional[int] = None
 
     class Config:
         orm_mode = True

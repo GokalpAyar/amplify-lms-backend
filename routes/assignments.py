@@ -11,7 +11,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlmodel import Session, select
 
-from audio_storage import AudioStorageError, try_get_audio_storage
 from db import get_session
 from models import Assignment, AssignmentDraft, Response
 from schemas import (
@@ -192,15 +191,13 @@ def delete_assignment(assignment_id: str, session: Session = Depends(get_session
     if not assignment:
         raise HTTPException(status_code=404, detail="Assignment not found")
 
-    storage = try_get_audio_storage()
-    orphaned_audio: list[str] = []
-    deleted_responses = 0
-
     logger.info(
         "Deleting assignment '%s' (%s)",
         assignment_id,
         assignment.title,
     )
+
+    deleted_responses = 0
 
     try:
         responses = session.exec(
@@ -209,17 +206,6 @@ def delete_assignment(assignment_id: str, session: Session = Depends(get_session
         deleted_responses = len(responses)
 
         for response in responses:
-            if storage and response.audio_storage_path:
-                try:
-                    storage.delete_audio(response.audio_storage_path)
-                except AudioStorageError as exc:  # noqa: BLE001
-                    orphaned_audio.append(response.id)
-                    logger.warning(
-                        "Failed to delete audio for response %s (path=%s): %s",
-                        response.id,
-                        response.audio_storage_path,
-                        exc,
-                    )
             session.delete(response)
 
         session.flush()  # ensure responses are removed before deleting assignment
@@ -227,10 +213,9 @@ def delete_assignment(assignment_id: str, session: Session = Depends(get_session
         session.commit()
 
         logger.info(
-            "Deleted assignment '%s' and %s responses (audio cleanup failures=%s)",
+            "Deleted assignment '%s' and %s responses",
             assignment_id,
             deleted_responses,
-            len(orphaned_audio),
         )
 
     except HTTPException:
@@ -238,24 +223,33 @@ def delete_assignment(assignment_id: str, session: Session = Depends(get_session
         raise
     except IntegrityError as exc:
         session.rollback()
-        logger.exception("FK constraint prevented assignment '%s' deletion", assignment_id)
+        logger.exception(
+            "Foreign-key constraint prevented assignment '%s' deletion: %s",
+            assignment_id,
+            exc,
+        )
         raise HTTPException(
             status_code=409,
-            detail=(
-                "Assignment still has linked submissions and could not be deleted. "
-                "Please remove the remaining responses and try again."
-            ),
+            detail="Assignment still has linked responses. Please retry after confirming all submissions were removed.",
         ) from exc
     except SQLAlchemyError as exc:
         session.rollback()
-        logger.exception("Database error while deleting assignment '%s'", assignment_id)
+        logger.exception(
+            "Database error while deleting assignment '%s': %s",
+            assignment_id,
+            exc,
+        )
         raise HTTPException(
             status_code=500,
-            detail="Database error while deleting assignment.",
+            detail="Database error while deleting assignment. See server logs for details.",
         ) from exc
     except Exception as exc:  # noqa: BLE001
         session.rollback()
-        logger.exception("Unexpected error while deleting assignment '%s'", assignment_id)
+        logger.exception(
+            "Unexpected error while deleting assignment '%s': %s",
+            assignment_id,
+            exc,
+        )
         raise HTTPException(
             status_code=500,
             detail="Unable to delete assignment right now.",
@@ -265,8 +259,6 @@ def delete_assignment(assignment_id: str, session: Session = Depends(get_session
         "message": "Assignment deleted successfully.",
         "responses_deleted": deleted_responses,
     }
-    if orphaned_audio:
-        response_body["audio_cleanup_failed_for"] = orphaned_audio
 
     return response_body
 
