@@ -6,9 +6,9 @@
 # ==========================================================
 
 from sqlmodel import SQLModel, Field, Column, JSON, Relationship
-from sqlalchemy import ForeignKey, String, BigInteger
+from sqlalchemy import ForeignKey, String
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import List, Optional
 import uuid
 from pydantic import BaseModel
 
@@ -133,14 +133,6 @@ class Response(SQLModel, table=True):
     submittedAt: datetime = Field(default_factory=datetime.utcnow)
     grade: Optional[float] = None  # optional instructor-assigned grade
 
-    audio_file_url: Optional[str] = None
-    audio_storage_path: Optional[str] = None
-    audio_mime_type: Optional[str] = None
-    audio_file_size: Optional[int] = Field(
-        default=None,
-        sa_column=Column(BigInteger),
-    )
-
     # Relationship back to Assignment
     assignment: Optional[Assignment] = Relationship(
         back_populates="responses",
@@ -148,17 +140,3 @@ class Response(SQLModel, table=True):
     )
 
     model_config = {"arbitrary_types_allowed": True}
-
-    @property
-    def audio_metadata(self) -> dict[str, Any] | None:
-        metadata = {
-            "file_url": self.audio_file_url,
-            "storage_path": self.audio_storage_path,
-            "mime_type": self.audio_mime_type,
-            "file_size": self.audio_file_size,
-        }
-
-        if not any(value not in (None, "") for value in metadata.values()):
-            return None
-
-        return metadata
