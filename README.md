@@ -14,6 +14,11 @@ Create `backend/.env` from `.env.example` and fill in the secrets (these same ke
 | `JWT_SECRET` | Secret used to sign JWTs. |
 | `FRONTEND_ORIGINS` | Comma-separated list of allowed origins for CORS (`https://your-vercel-app.vercel.app,https://localhost:5173`). |
 | `FRONTEND_ORIGIN_REGEX` (optional) | Regex variant when you must allow a wildcard domain. |
+| `SUPABASE_URL` | The Supabase project URL (e.g. `https://abccompany.supabase.co`) used for Storage + REST operations. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service role key used server-side to manage the private Storage bucket. Keep this secret. |
+| `SUPABASE_AUDIO_BUCKET` (optional) | Storage bucket name for audio (defaults to `response-audio`). |
+| `SUPABASE_AUDIO_FOLDER` (optional) | Folder/prefix to group response audio inside the bucket (defaults to `responses`). |
+| `SUPABASE_AUDIO_BUCKET_PUBLIC` (optional) | Set to `true` to make the bucket public; defaults to `false` so audio is only accessible through the API. |
 
 #### Supabase `DATABASE_URL` examples
 
@@ -30,6 +35,13 @@ Example using the project id above:
 The backend now normalizes Supabase URLs at startup and appends `sslmode=require` automatically if you forget it, but setting it explicitly keeps Render’s `DATABASE_URL` crystal clear.
 
 For the Vite frontend, copy `frontend/.env.example` to `frontend/.env` and set `VITE_API_URL` (e.g. `https://your-api.onrender.com`).
+
+#### Supabase Storage for audio
+
+- Upgrade to Supabase **Pro** (or any plan with Storage) so student voice recordings can be persisted reliably.
+- Provide the env vars above, then let the backend provision the `response-audio` bucket automatically at startup.
+- Audio objects remain private by default; the new `GET /responses/{id}/audio` endpoint streams files securely using the service role key.
+- The API rejects audio uploads larger than **25 MB** by default. Override with `RESPONSE_AUDIO_MAX_BYTES` (or `RESPONSE_AUDIO_MAX_MB`) if you need a different limit.
 
 ### 2. Local Development
 

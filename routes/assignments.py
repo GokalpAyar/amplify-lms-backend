@@ -10,6 +10,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
+from audio_storage import AudioStorageError, try_get_audio_storage
 from db import get_session
 from models import Assignment, AssignmentDraft, Response
 from schemas import (
@@ -191,11 +192,21 @@ def delete_assignment(assignment_id: str, session: Session = Depends(get_session
         raise HTTPException(status_code=404, detail="Assignment not found")
 
     try:
+        storage = try_get_audio_storage()
         responses = session.exec(
             select(Response).where(Response.assignment_id == assignment_id)
         ).all()
 
         for response in responses:
+            if storage and response.audio_storage_path:
+                try:
+                    storage.delete_audio(response.audio_storage_path)
+                except AudioStorageError as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to delete audio for response %s: %s",
+                        response.id,
+                        exc,
+                    )
             session.delete(response)
 
         session.delete(assignment)

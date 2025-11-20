@@ -122,6 +122,10 @@ class Response(SQLModel, table=True):
 
     submittedAt: datetime = Field(default_factory=datetime.utcnow)
     grade: Optional[float] = None  # optional instructor-assigned grade
+    audio_file_url: Optional[str] = None
+    audio_storage_path: Optional[str] = None
+    audio_mime_type: Optional[str] = None
+    audio_file_size: Optional[int] = None
 
     # Relationship back to Assignment
     assignment: Optional[Assignment] = Relationship(back_populates="responses")
