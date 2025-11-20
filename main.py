@@ -13,7 +13,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import SQLModel
 
 from db import engine
-from audio_storage import AudioStorageError, try_get_audio_storage
 from routes import assignments, auth, responses, speech
 
 _BASE_DIR = Path(__file__).resolve().parent
@@ -57,14 +56,6 @@ def init_database() -> None:
     """Ensure tables and columns exist before serving traffic."""
     logger.info("Ensuring SQLModel metadata is up to date (demo_mode=%s)", DEMO_MODE)
     SQLModel.metadata.create_all(engine)
-
-    storage = try_get_audio_storage()
-    if storage:
-        try:
-            storage.ensure_bucket()
-            logger.info("Supabase audio bucket verified.")
-        except AudioStorageError as exc:
-            logger.warning("Supabase audio bucket check failed: %s", exc)
 
 
 @app.get("/health")
