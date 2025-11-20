@@ -21,11 +21,19 @@ def _add_assignment_time_limit(session: Session) -> None:
     _ensure_column(session, "assignment", "assignmentTimeLimit", "INTEGER")
 
 
+def _add_response_audio_columns(session: Session) -> None:
+    _ensure_column(session, "response", "audio_storage_path", "TEXT")
+    _ensure_column(session, "response", "audio_file_url", "TEXT")
+    _ensure_column(session, "response", "audio_file_size", "BIGINT")
+    _ensure_column(session, "response", "audio_mime_type", "TEXT")
+
+
 def migrate_database() -> None:
     """Add any missing columns required by the latest models."""
     with Session(engine) as session:
         try:
             _add_assignment_time_limit(session)
+            _add_response_audio_columns(session)
             session.commit()
         except Exception as exc:
             session.rollback()

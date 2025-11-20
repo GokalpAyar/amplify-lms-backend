@@ -133,6 +133,12 @@ class Response(SQLModel, table=True):
     submittedAt: datetime = Field(default_factory=datetime.utcnow)
     grade: Optional[float] = None  # optional instructor-assigned grade
 
+    # Optional audio attachment metadata
+    audio_storage_path: Optional[str] = Field(default=None, description="Supabase object path")
+    audio_file_url: Optional[str] = Field(default=None, description="Public/Signed URL for the stored audio")
+    audio_file_size: Optional[int] = Field(default=None, description="Audio file size in bytes")
+    audio_mime_type: Optional[str] = Field(default=None, description="Original audio mime type")
+
     # Relationship back to Assignment
     assignment: Optional[Assignment] = Relationship(
         back_populates="responses",
