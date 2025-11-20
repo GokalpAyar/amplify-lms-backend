@@ -29,6 +29,7 @@ class AssignmentCreate(BaseModel):
     assignmentTimeLimit: Optional[int] = None  # ✅ new field
     questions: Dict[str, Any] | list
     owner_id: Optional[str] = None             # ✅ new field (teacher’s ID)
+    draft_id: Optional[str] = None             # Optional draft to convert on publish
 
 
 class AssignmentOut(AssignmentCreate):
@@ -37,6 +38,34 @@ class AssignmentOut(AssignmentCreate):
 
     class Config:
         orm_mode = True   # allows direct DB-to-JSON conversion
+
+
+# ---------------------- Assignment Draft Schemas ----------------------
+class AssignmentDraftBase(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    questions: Dict[str, Any] | list | None = None
+
+
+class AssignmentDraftCreate(AssignmentDraftBase):
+    owner_id: str
+
+
+class AssignmentDraftUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    questions: Dict[str, Any] | list | None = None
+    owner_id: Optional[str] = None
+
+
+class AssignmentDraftOut(AssignmentDraftBase):
+    id: str
+    owner_id: str
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        orm_mode = True
 
 
 # ---------------------- Response Schemas ----------------------

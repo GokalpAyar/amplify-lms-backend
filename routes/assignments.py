@@ -5,13 +5,20 @@
 # ==========================================================
 
 import logging
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
 from db import get_session
-from models import Assignment, Response
-from schemas import AssignmentCreate, AssignmentOut
+from models import Assignment, AssignmentDraft, Response
+from schemas import (
+    AssignmentCreate,
+    AssignmentDraftCreate,
+    AssignmentDraftOut,
+    AssignmentDraftUpdate,
+    AssignmentOut,
+)
 
 # ----------------------------------------------------------
 # Router setup
@@ -19,6 +26,82 @@ from schemas import AssignmentCreate, AssignmentOut
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/assignments", tags=["assignments"])
+
+
+# ----------------------------------------------------------
+# Draft Endpoints
+# ----------------------------------------------------------
+@router.post("/drafts", response_model=AssignmentDraftOut, status_code=201)
+def create_assignment_draft(
+    payload: AssignmentDraftCreate,
+    session: Session = Depends(get_session),
+):
+    """Create a new assignment draft for the given owner."""
+
+    try:
+        data = payload.model_dump(exclude_none=True)
+        draft = AssignmentDraft(**data)
+        session.add(draft)
+        session.commit()
+        session.refresh(draft)
+        return draft
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        logger.exception("Failed to create assignment draft for owner '%s'", payload.owner_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to save assignment draft right now.",
+        ) from exc
+
+
+@router.get("/drafts/{user_id}", response_model=list[AssignmentDraftOut])
+def list_assignment_drafts(user_id: str, session: Session = Depends(get_session)):
+    """Return all drafts for a specific instructor ordered by last update."""
+
+    stmt = (
+        select(AssignmentDraft)
+        .where(AssignmentDraft.owner_id == user_id)
+        .order_by(AssignmentDraft.updated_at.desc())
+    )
+    return session.exec(stmt).all()
+
+
+@router.patch("/drafts/{draft_id}", response_model=AssignmentDraftOut)
+def update_assignment_draft(
+    draft_id: str,
+    payload: AssignmentDraftUpdate,
+    session: Session = Depends(get_session),
+):
+    """Update mutable fields on a draft. Used by 30-second auto-save."""
+
+    draft = session.get(AssignmentDraft, draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    update_data = payload.model_dump(exclude_unset=True)
+    if update_data:
+        for key, value in update_data.items():
+            setattr(draft, key, value)
+    draft.updated_at = datetime.utcnow()
+
+    try:
+        session.add(draft)
+        session.commit()
+        session.refresh(draft)
+        return draft
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        logger.exception("Failed to update assignment draft '%s'", draft_id)
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to update assignment draft right now.",
+        ) from exc
 
 # ----------------------------------------------------------
 # POST /assignments/
@@ -32,10 +115,25 @@ def create_assignment(
     """Create a new assignment (owner_id optional in demo mode)."""
 
     try:
-        data = payload.model_dump(exclude_none=True)
+        draft_id = payload.draft_id
+        data = payload.model_dump(exclude_none=True, exclude={"draft_id"})
+
+        draft_to_delete = None
+        if draft_id:
+            draft_to_delete = session.get(AssignmentDraft, draft_id)
+            if not draft_to_delete:
+                raise HTTPException(status_code=404, detail="Draft not found")
+            if payload.owner_id and draft_to_delete.owner_id != payload.owner_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Draft does not belong to the provided owner.",
+                )
+
         assignment = Assignment(**data)
 
         session.add(assignment)
+        if draft_to_delete:
+            session.delete(draft_to_delete)
         session.commit()
         session.refresh(assignment)
 
