@@ -54,8 +54,8 @@ if not DEMO_MODE:
 
 @app.on_event("startup")
 def init_database() -> None:
-    """Ensure tables exist before API starts accepting requests."""
-    logger.info("Ensuring SQLModel metadata is applied (demo_mode=%s)", DEMO_MODE)
+    """Ensure tables and columns exist before serving traffic."""
+    logger.info("Ensuring SQLModel metadata is up to date (demo_mode=%s)", DEMO_MODE)
     SQLModel.metadata.create_all(engine)
 
     storage = try_get_audio_storage()
