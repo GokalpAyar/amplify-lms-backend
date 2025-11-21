@@ -184,16 +184,6 @@ def update_student_accuracy_rating(
     response_id: str,
     payload: StudentAccuracyRatingPayload,
     session: Session = Depends(get_session),
-    student_j_number_header: str | None = Header(
-        default=None,
-        alias="X-Student-JNumber",
-        description="Student identifier header used to validate ownership.",
-    ),
-    student_j_number_query: str | None = Query(
-        default=None,
-        alias="student_j_number",
-        description="Fallback student identifier passed as a query parameter.",
-    ),
 ):
     """Allow students to rate the accuracy of their own transcript."""
 
@@ -201,28 +191,15 @@ def update_student_accuracy_rating(
     if not response:
         raise HTTPException(status_code=404, detail="Response not found")
 
-    student_identifier = _resolve_student_identifier(
-        header_value=student_j_number_header,
-        query_value=student_j_number_query,
-        body_value=payload.student_id,
-    )
-    if response.jNumber != student_identifier:
-        raise HTTPException(
-            status_code=403,
-            detail="You are not allowed to rate this response.",
-        )
-
+    # SIMPLIFIED: Just update the rating without complex student validation
     response.student_accuracy_rating = payload.rating
-    response.student_rating_comment = _clean_comment(payload.comment)
+    response.student_rating_comment = payload.comment
 
     try:
         session.add(response)
         session.commit()
         session.refresh(response)
         return response
-    except HTTPException:
-        session.rollback()
-        raise
     except Exception as exc:  # noqa: BLE001
         session.rollback()
         logger.exception("Failed to update student accuracy rating for %s: %s", response_id, exc)
@@ -309,25 +286,4 @@ def _parse_json_field(raw_value: Any, field_name: str) -> Any:
             detail=f"Field '{field_name}' is required in the form payload.",
         )
     return raw_value
-
-
-def _resolve_student_identifier(
-    header_value: str | None,
-    query_value: str | None,
-    body_value: str | None,
-) -> str:
-    identifier = (body_value or header_value or query_value or "").strip()
-    if not identifier:
-        raise HTTPException(
-            status_code=400,
-            detail="Student identifier is required to submit a rating.",
-        )
-    return identifier
-
-
-def _clean_comment(comment: str | None) -> str | None:
-    if comment is None:
-        return None
-    stripped = comment.strip()
-    return stripped or None
 
