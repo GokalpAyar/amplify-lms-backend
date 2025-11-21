@@ -291,7 +291,10 @@ def _parse_json_field(raw_value: Any, field_name: str) -> Any:
 
 def _serialize_response(response: Response) -> dict[str, Any]:
     """Serialize a Response model to ensure rating fields are always present."""
-    return ResponseOut.model_validate(response, from_attributes=True).model_dump()
+    serialized = ResponseOut.model_validate(response, from_attributes=True).model_dump()
+    print("Returning response with rating:", serialized.get("student_accuracy_rating"))
+    print("Returning response with comment:", serialized.get("student_rating_comment"))
+    return serialized
 
 
 def _serialize_response_list(responses: Sequence[Response]) -> list[dict[str, Any]]:
