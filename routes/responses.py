@@ -5,9 +5,9 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, Sequence
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Header
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import ValidationError
 from sqlmodel import Session, select
 from starlette.datastructures import FormData
@@ -74,7 +74,7 @@ async def create_response(
             payload.studentName,
         )
 
-        return response
+        return _serialize_response(response)
     except HTTPException:
         session.rollback()
         raise
@@ -87,7 +87,7 @@ async def create_response(
         ) from exc
 
 
-@router.get("/")
+@router.get("/", response_model=list[ResponseOut])
 def list_responses(
     owner_id: str | None = Query(
         default=None,
@@ -112,10 +112,11 @@ def list_responses(
 
         stmt = stmt.where(Response.assignment_id.in_(assignment_ids))
 
-    return session.exec(stmt).all()
+    responses = session.exec(stmt).all()
+    return _serialize_response_list(responses)
 
 
-@router.get("/{assignment_id}")
+@router.get("/{assignment_id}", response_model=list[ResponseOut])
 def get_responses_for_assignment(
     assignment_id: str,
     session: Session = Depends(get_session),
@@ -130,7 +131,7 @@ def get_responses_for_assignment(
         select(Response).where(Response.assignment_id == assignment_id)
     ).all()
 
-    return responses
+    return _serialize_response_list(responses)
 
 
 @router.post("/{response_id}/accuracy-rating", response_model=AccuracyRatingOut)
@@ -199,7 +200,7 @@ def update_student_accuracy_rating(
         session.add(response)
         session.commit()
         session.refresh(response)
-        return response
+        return _serialize_response(response)
     except Exception as exc:  # noqa: BLE001
         session.rollback()
         logger.exception("Failed to update student accuracy rating for %s: %s", response_id, exc)
@@ -286,4 +287,13 @@ def _parse_json_field(raw_value: Any, field_name: str) -> Any:
             detail=f"Field '{field_name}' is required in the form payload.",
         )
     return raw_value
+
+
+def _serialize_response(response: Response) -> dict[str, Any]:
+    """Serialize a Response model to ensure rating fields are always present."""
+    return ResponseOut.model_validate(response, from_attributes=True).model_dump()
+
+
+def _serialize_response_list(responses: Sequence[Response]) -> list[dict[str, Any]]:
+    return [_serialize_response(response) for response in responses]
 
