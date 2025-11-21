@@ -108,3 +108,7 @@ class AccuracyRatingOut(AccuracyRatingPayload):
 class StudentAccuracyRatingPayload(BaseModel):
     rating: int = Field(ge=1, le=5)
     comment: Optional[str] = None
+    student_id: Optional[str] = Field(
+        default=None,
+        description="Identifier for the student submitting the rating.",
+    )
