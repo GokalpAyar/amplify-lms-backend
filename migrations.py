@@ -21,11 +21,17 @@ def _add_assignment_time_limit(session: Session) -> None:
     _ensure_column(session, "assignment", "assignmentTimeLimit", "INTEGER")
 
 
+def _add_response_student_accuracy_columns(session: Session) -> None:
+    _ensure_column(session, "response", "student_accuracy_rating", "INTEGER")
+    _ensure_column(session, "response", "student_rating_comment", "TEXT")
+
+
 def migrate_database() -> None:
     """Add any missing columns required by the latest models."""
     with Session(engine) as session:
         try:
             _add_assignment_time_limit(session)
+            _add_response_student_accuracy_columns(session)
             session.commit()
         except Exception as exc:
             session.rollback()

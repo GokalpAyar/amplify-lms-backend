@@ -24,6 +24,24 @@ def migrate_database():
             print("✅ Added assignmentTimeLimit column to assignment table")
         except Exception as e:
             print(f"assignmentTimeLimit column may already exist: {e}")
+
+        try:
+            session.execute(text("""
+                ALTER TABLE response
+                ADD COLUMN student_accuracy_rating INTEGER
+            """))
+            print("✅ Added student_accuracy_rating column to response table")
+        except Exception as e:
+            print(f"student_accuracy_rating column may already exist: {e}")
+
+        try:
+            session.execute(text("""
+                ALTER TABLE response
+                ADD COLUMN student_rating_comment TEXT
+            """))
+            print("✅ Added student_rating_comment column to response table")
+        except Exception as e:
+            print(f"student_rating_comment column may already exist: {e}")
         
         session.commit()
 
