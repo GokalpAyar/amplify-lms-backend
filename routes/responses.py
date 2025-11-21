@@ -7,14 +7,20 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Header
 from pydantic import ValidationError
 from sqlmodel import Session, select
 from starlette.datastructures import FormData
 
 from db import get_session
 from models import Assignment, Response, AccuracyRating
-from schemas import AccuracyRatingOut, AccuracyRatingPayload, ResponseCreate, ResponseOut
+from schemas import (
+    AccuracyRatingOut,
+    AccuracyRatingPayload,
+    ResponseCreate,
+    ResponseOut,
+    StudentAccuracyRatingPayload,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +179,55 @@ def upsert_accuracy_rating(
         ) from exc
 
 
+@router.put("/{response_id}/accuracy-rating", response_model=ResponseOut)
+def update_student_accuracy_rating(
+    response_id: str,
+    payload: StudentAccuracyRatingPayload,
+    session: Session = Depends(get_session),
+    student_j_number_header: str | None = Header(
+        default=None,
+        alias="X-Student-JNumber",
+        description="Student identifier header used to validate ownership.",
+    ),
+    student_j_number_query: str | None = Query(
+        default=None,
+        alias="student_j_number",
+        description="Fallback student identifier passed as a query parameter.",
+    ),
+):
+    """Allow students to rate the accuracy of their own transcript."""
+
+    response = session.get(Response, response_id)
+    if not response:
+        raise HTTPException(status_code=404, detail="Response not found")
+
+    student_identifier = _resolve_student_identifier(student_j_number_header, student_j_number_query)
+    if response.jNumber != student_identifier:
+        raise HTTPException(
+            status_code=403,
+            detail="You are not allowed to rate this response.",
+        )
+
+    response.student_accuracy_rating = payload.rating
+    response.student_rating_comment = _clean_comment(payload.comment)
+
+    try:
+        session.add(response)
+        session.commit()
+        session.refresh(response)
+        return response
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        logger.exception("Failed to update student accuracy rating for %s: %s", response_id, exc)
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to update accuracy rating right now.",
+        ) from exc
+
+
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
@@ -250,4 +305,21 @@ def _parse_json_field(raw_value: Any, field_name: str) -> Any:
             detail=f"Field '{field_name}' is required in the form payload.",
         )
     return raw_value
+
+
+def _resolve_student_identifier(header_value: str | None, query_value: str | None) -> str:
+    identifier = (header_value or query_value or "").strip()
+    if not identifier:
+        raise HTTPException(
+            status_code=400,
+            detail="Student identifier is required to submit a rating.",
+        )
+    return identifier
+
+
+def _clean_comment(comment: str | None) -> str | None:
+    if comment is None:
+        return None
+    stripped = comment.strip()
+    return stripped or None
 

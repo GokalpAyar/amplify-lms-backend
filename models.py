@@ -6,7 +6,7 @@
 # ==========================================================
 
 from sqlmodel import SQLModel, Field, Column, JSON, Relationship
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import ForeignKey, String, Text
 from datetime import datetime
 from typing import List, Optional
 import uuid
@@ -130,6 +130,17 @@ class Response(SQLModel, table=True):
     answers: dict = Field(sa_column=Column(JSON))
     transcripts: dict = Field(sa_column=Column(JSON))
     audio_file_url: Optional[str] = None
+    student_accuracy_rating: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=5,
+        description="Student provided rating (1-5) for transcript accuracy.",
+    )
+    student_rating_comment: Optional[str] = Field(
+        default=None,
+        sa_column=Column(Text),
+        description="Optional student comment about transcript accuracy.",
+    )
 
     submittedAt: datetime = Field(default_factory=datetime.utcnow)
     grade: Optional[float] = None  # optional instructor-assigned grade

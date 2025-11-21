@@ -57,21 +57,27 @@ def init_database() -> None:
     """Ensure tables and columns exist before serving traffic."""
     logger.info("Ensuring SQLModel metadata is up to date (demo_mode=%s)", DEMO_MODE)
     SQLModel.metadata.create_all(engine)
-    _ensure_response_audio_column()
+    _ensure_response_aux_columns()
 
 
-def _ensure_response_audio_column() -> None:
-    """Add audio_file_url to response table when missing (for legacy databases)."""
+def _ensure_response_aux_columns() -> None:
+    """Add optional columns to response table when missing (for legacy databases)."""
     try:
         with engine.begin() as connection:
             inspector = inspect(connection)
             columns = {column["name"] for column in inspector.get_columns("response")}
-            if "audio_file_url" in columns:
-                return
-            logger.info("Adding missing audio_file_url column to response table.")
-            connection.execute(text("ALTER TABLE response ADD COLUMN audio_file_url VARCHAR"))
+            migrations: dict[str, str] = {
+                "audio_file_url": "VARCHAR",
+                "student_accuracy_rating": "INTEGER",
+                "student_rating_comment": "TEXT",
+            }
+            for column_name, column_type in migrations.items():
+                if column_name in columns:
+                    continue
+                logger.info("Adding missing %s column to response table.", column_name)
+                connection.execute(text(f"ALTER TABLE response ADD COLUMN {column_name} {column_type}"))
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Unable to verify or add audio_file_url column: %s", exc)
+        logger.warning("Unable to verify or add response optional columns: %s", exc)
 
 
 @app.get("/health")
