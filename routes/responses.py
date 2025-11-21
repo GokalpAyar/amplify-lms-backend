@@ -201,7 +201,11 @@ def update_student_accuracy_rating(
     if not response:
         raise HTTPException(status_code=404, detail="Response not found")
 
-    student_identifier = _resolve_student_identifier(student_j_number_header, student_j_number_query)
+    student_identifier = _resolve_student_identifier(
+        header_value=student_j_number_header,
+        query_value=student_j_number_query,
+        body_value=payload.student_id,
+    )
     if response.jNumber != student_identifier:
         raise HTTPException(
             status_code=403,
@@ -307,8 +311,12 @@ def _parse_json_field(raw_value: Any, field_name: str) -> Any:
     return raw_value
 
 
-def _resolve_student_identifier(header_value: str | None, query_value: str | None) -> str:
-    identifier = (header_value or query_value or "").strip()
+def _resolve_student_identifier(
+    header_value: str | None,
+    query_value: str | None,
+    body_value: str | None,
+) -> str:
+    identifier = (body_value or header_value or query_value or "").strip()
     if not identifier:
         raise HTTPException(
             status_code=400,
