@@ -261,10 +261,20 @@ def list_assignments(
 # Instructor removes assignment + its responses
 # ----------------------------------------------------------
 @router.delete("/{assignment_id}")
-def delete_assignment(assignment_id: str, session: Session = Depends(get_session)):
+def delete_assignment(
+    assignment_id: str,
+    session: Session = Depends(get_session),
+    current_user_id: str = Depends(require_user_id),
+):
     assignment = session.get(Assignment, assignment_id)
     if not assignment:
         raise HTTPException(status_code=404, detail="Assignment not found")
+
+    if assignment.owner_id != current_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Assignment does not belong to the authenticated instructor.",
+        )
 
     logger.info(
         "Deleting assignment '%s' (%s)",

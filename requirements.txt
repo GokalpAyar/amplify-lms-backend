@@ -8,6 +8,7 @@ python-dotenv==1.0.0
 # === Authentication ===
 python-jose[cryptography]==3.3.0
 passlib[argon2]==1.7.4
+clerk-backend-api>=1.0.0
 
 # === Speech-to-Text (OpenAI Cloud) ===
 openai==1.58.1

@@ -4,17 +4,14 @@ from __future__ import annotations
 
 import logging
 import os
-from functools import lru_cache
 from typing import Any
 
-import httpx
+from clerk_backend_api import verify_token
 from fastapi import Header, HTTPException, status
 
 logger = logging.getLogger(__name__)
 
 _DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() in {"1", "true", "yes", "on"}
-_REQUEST_TIMEOUT = float(os.getenv("CLERK_HTTP_TIMEOUT", "5.0"))
-
 __all__ = ["require_user_id", "get_optional_user_id"]
 
 
@@ -75,16 +72,7 @@ def _resolve_user_id(
         token = clerk_session_token.strip()
 
     if token:
-        claims = _verify_token_with_clerk(token)
-        user_id = (
-            claims.get("sub")
-            or claims.get("user_id")
-            or claims.get("userId")
-            or claims.get("uid")
-        )
-        if not user_id:
-            logger.error("Clerk claims missing `sub` and `user_id`: %s", claims)
-            raise _unauthorized("Authentication token missing user identity.")
+        user_id = _verify_token_with_clerk(token)
 
         if clerk_user_id_header and clerk_user_id_header != user_id:
             logger.warning(
@@ -130,7 +118,7 @@ def _unauthorized(detail: str) -> HTTPException:
     )
 
 
-def _verify_token_with_clerk(token: str) -> dict[str, Any]:
+def _verify_token_with_clerk(token: str) -> str:
     secret_key = os.getenv("CLERK_SECRET_KEY")
     if not secret_key:
         logger.error("CLERK_SECRET_KEY is not configured.")
@@ -139,56 +127,14 @@ def _verify_token_with_clerk(token: str) -> dict[str, Any]:
             detail="Authentication service not configured.",
         )
 
-    verify_url = _clerk_verify_url()
     try:
-        response = httpx.post(
-            verify_url,
-            headers={"Authorization": f"Bearer {secret_key}"},
-            json={"token": token},
-            timeout=_REQUEST_TIMEOUT,
-        )
-    except httpx.RequestError as exc:
-        logger.exception("Unable to contact Clerk while verifying token.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Unable to verify authentication token right now.",
-        ) from exc
+        payload: dict[str, Any] = verify_token(token, clerk_sk=secret_key)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Clerk token verification failed: %s", exc)
+        raise _unauthorized("Invalid authentication token.") from exc
 
-    if response.status_code != 200:
-        error_message = "Invalid Clerk session token."
-        try:
-            payload = response.json()
-            error_message = (
-                payload.get("error", {}).get("message")
-                or payload.get("message")
-                or error_message
-            )
-        except ValueError:
-            payload = None
-        logger.warning("Clerk token verification failed: %s", error_message)
-        raise _unauthorized("Invalid authentication token.")
-
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        logger.exception("Clerk verification endpoint returned invalid JSON.")
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Authentication service returned invalid response.",
-        ) from exc
-
-    data = payload.get("data", payload)
-    claims = data.get("claims") or data.get("session", {}).get("claims")
-    if not claims:
-        logger.error("Clerk verification response missing claims: %s", payload)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Authentication service response missing claims.",
-        )
-    return claims
-
-
-@lru_cache(maxsize=1)
-def _clerk_verify_url() -> str:
-    base_url = os.getenv("CLERK_API_BASE_URL", "https://api.clerk.dev")
-    return f"{base_url.rstrip('/')}/v1/tokens/verify"
+    user_id = payload.get("sub")
+    if not user_id:
+        logger.error("Clerk token payload missing 'sub': %s", payload)
+        raise _unauthorized("Authentication token missing user identity.")
+    return user_id
