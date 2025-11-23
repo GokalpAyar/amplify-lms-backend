@@ -7,7 +7,7 @@
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlmodel import Session, select
 
@@ -20,7 +20,6 @@ from schemas import (
     AssignmentDraftUpdate,
     AssignmentOut,
 )
-from security import get_authenticated_user_id
 
 # ----------------------------------------------------------
 # Router setup
@@ -113,24 +112,22 @@ def update_assignment_draft(
 def create_assignment(
     payload: AssignmentCreate,
     session: Session = Depends(get_session),
-    current_user_id: str = Depends(get_authenticated_user_id),
 ):
-    """Create a new assignment, automatically attributing ownership to the caller."""
+    """Create a new assignment (owner_id optional in demo mode)."""
 
     try:
         draft_id = payload.draft_id
-        data = payload.model_dump(exclude_none=True, exclude={"draft_id", "owner_id"})
-        data["owner_id"] = current_user_id
+        data = payload.model_dump(exclude_none=True, exclude={"draft_id"})
 
         draft_to_delete = None
         if draft_id:
             draft_to_delete = session.get(AssignmentDraft, draft_id)
             if not draft_to_delete:
                 raise HTTPException(status_code=404, detail="Draft not found")
-            if draft_to_delete.owner_id != current_user_id:
+            if payload.owner_id and draft_to_delete.owner_id != payload.owner_id:
                 raise HTTPException(
                     status_code=403,
-                    detail="Draft does not belong to the authenticated user.",
+                    detail="Draft does not belong to the provided owner.",
                 )
 
         assignment = Assignment(**data)
@@ -172,12 +169,15 @@ def get_assignment(assignment_id: str, session: Session = Depends(get_session)):
 # ----------------------------------------------------------
 @router.get("/", response_model=list[AssignmentOut])
 def list_assignments(
+    owner_id: str | None = Query(
+        default=None,
+        description="Optionally filter assignments by owner_id.",
+    ),
     session: Session = Depends(get_session),
-    current_user_id: str = Depends(get_authenticated_user_id),
 ):
-    """Return assignments belonging to the authenticated instructor."""
-
-    stmt = select(Assignment).where(Assignment.owner_id == current_user_id)
+    stmt = select(Assignment)
+    if owner_id:
+        stmt = stmt.where(Assignment.owner_id == owner_id)
     return session.exec(stmt).all()
 
 
