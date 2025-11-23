@@ -19,8 +19,10 @@ __all__ = ["require_user_id"]
 
 
 def require_user_id(
-    authorization: str | None = Header(default=None),
+    authorization: str | None = Header(default=None, alias="Authorization"),
     demo_user_override: str | None = Header(default=None, alias="X-Demo-User-Id"),
+    clerk_session_token: str | None = Header(default=None, alias="X-Clerk-Session-Token"),
+    clerk_user_id_header: str | None = Header(default=None, alias="X-Clerk-User-Id"),
 ) -> str:
     """
     Resolve the current user's Clerk ID.
@@ -30,22 +32,44 @@ def require_user_id(
     `X-Demo-User-Id` header (or `DEMO_USER_ID` env var) to keep local testing easy.
     """
 
+    token: str | None = None
     if authorization:
         token = _extract_bearer_token(authorization)
+    elif clerk_session_token:
+        token = clerk_session_token.strip()
+
+    if token:
         claims = _verify_token_with_clerk(token)
-        user_id = claims.get("sub") or claims.get("user_id")
+        user_id = (
+            claims.get("sub")
+            or claims.get("user_id")
+            or claims.get("userId")
+            or claims.get("uid")
+        )
         if not user_id:
             logger.error("Clerk claims missing `sub` and `user_id`: %s", claims)
             raise _unauthorized("Authentication token missing user identity.")
+
+        if clerk_user_id_header and clerk_user_id_header != user_id:
+            logger.warning(
+                "Clerk user id header '%s' does not match token subject '%s'. "
+                "Proceeding with the token value.",
+                clerk_user_id_header,
+                user_id,
+            )
         return user_id
 
     if _DEMO_MODE:
-        fallback = demo_user_override or os.getenv("DEMO_USER_ID")
+        fallback = (
+            clerk_user_id_header
+            or demo_user_override
+            or os.getenv("DEMO_USER_ID")
+        )
         if fallback:
             logger.debug("DEMO_MODE active — using fallback user id '%s'.", fallback)
             return fallback
         raise _unauthorized(
-            "Demo mode requires either Authorization header or X-Demo-User-Id.",
+            "Demo mode requires a Clerk token or an X-Clerk-User-Id / X-Demo-User-Id header.",
         )
 
     raise _unauthorized("Missing Authorization header.")
