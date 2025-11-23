@@ -13,7 +13,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB_PATH}"
 
 from db import engine  # noqa: E402
 from main import app  # noqa: E402
-from models import Assignment, Response  # noqa: E402
+from models import Assignment, Response, User  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -62,6 +62,21 @@ def _seed_response(session: Session, rating: int = 4, comment: str = "Good but m
     return assignment, response
 
 
+def _ensure_user(session: Session, user_id: str) -> None:
+    """Create a minimal instructor record if it does not exist."""
+    if session.get(User, user_id):
+        return
+    user = User(
+        id=user_id,
+        email=f"{user_id}@example.com",
+        password_hash="demo-hash",
+        role="instructor",
+        name="Demo Instructor",
+    )
+    session.add(user)
+    session.commit()
+
+
 def test_list_responses_includes_student_rating_fields(client):
     with Session(engine) as session:
         _assignment, response = _seed_response(session)
@@ -99,3 +114,34 @@ def test_assignment_response_listing_includes_student_ratings(client):
     assert record["id"] == response_id
     assert record["student_accuracy_rating"] == 5
     assert record["student_rating_comment"] == "Excellent transcript"
+
+
+def test_demo_mode_assignment_creation_allows_owner_id_in_body(client):
+    owner_id = "user_demo_owner"
+    with Session(engine) as session:
+        _ensure_user(session, owner_id)
+
+    payload = {
+        "title": "Demo Assignment",
+        "description": "Created while DEMO_MODE true",
+        "questions": {"q1": {"prompt": "Say hello."}},
+        "owner_id": owner_id,
+    }
+
+    resp = client.post("/assignments/", json=payload)
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["owner_id"] == owner_id
+    assert body["title"] == payload["title"]
+
+
+def test_demo_mode_assignment_creation_requires_owner_id_when_no_token(client):
+    payload = {
+        "title": "Missing Owner",
+        "description": "Should fail without owner_id in demo mode",
+        "questions": {"q1": {"prompt": "Wave"}},
+    }
+
+    resp = client.post("/assignments/", json=payload)
+    assert resp.status_code == 400
+    assert "owner_id" in resp.json()["detail"]

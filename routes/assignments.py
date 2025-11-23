@@ -5,9 +5,10 @@
 # ==========================================================
 
 import logging
+import os
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Header, status
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlmodel import Session, select
 
@@ -28,6 +29,65 @@ from middleware.auth import require_user_id
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/assignments", tags=["assignments"])
+DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() in {"1", "true", "yes", "on"}
+
+
+def _optional_user_id(
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    demo_user_override: str | None = Header(default=None, alias="X-Demo-User-Id"),
+    clerk_session_token: str | None = Header(default=None, alias="X-Clerk-Session-Token"),
+    clerk_user_id_header: str | None = Header(default=None, alias="X-Clerk-User-Id"),
+) -> str | None:
+    """
+    Attempt to resolve a user id while permitting demo-mode calls without auth.
+    """
+
+    try:
+        return require_user_id(
+            authorization,
+            demo_user_override,
+            clerk_session_token,
+            clerk_user_id_header,
+        )
+    except HTTPException as exc:
+        if DEMO_MODE and exc.status_code == status.HTTP_401_UNAUTHORIZED:
+            logger.debug(
+                "Demo mode create_assignment without Clerk token detected; "
+                "falling back to body owner_id.",
+            )
+            return None
+        raise
+
+
+def _resolve_owner_id(payload_owner_id: str | None, resolved_user_id: str | None) -> str:
+    """Determine which owner id to persist on the assignment record."""
+
+    if resolved_user_id:
+        if payload_owner_id and payload_owner_id != resolved_user_id:
+            logger.warning(
+                "Payload owner_id '%s' does not match authenticated user '%s'; "
+                "using the authenticated id.",
+                payload_owner_id,
+                resolved_user_id,
+            )
+        return resolved_user_id
+
+    if DEMO_MODE:
+        if payload_owner_id:
+            return payload_owner_id
+        fallback = os.getenv("DEMO_USER_ID")
+        if fallback:
+            logger.debug("Using DEMO_USER_ID fallback owner '%s' for assignment.", fallback)
+            return fallback
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Demo mode requires owner_id in the body when no Clerk token is provided.",
+        )
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authorization header with a valid Clerk token is required.",
+    )
 
 
 # ----------------------------------------------------------
@@ -109,25 +169,26 @@ def update_assignment_draft(
 # POST /assignments/
 # Instructor creates new assignment
 # ----------------------------------------------------------
-@router.post("/", response_model=AssignmentOut)
+@router.post("/", response_model=AssignmentOut, status_code=201)
 def create_assignment(
     payload: AssignmentCreate,
     session: Session = Depends(get_session),
-    current_user_id: str = Depends(require_user_id),
+    current_user_id: str | None = Depends(_optional_user_id),
 ):
     """Create a new assignment owned by the authenticated instructor."""
 
     try:
         draft_id = payload.draft_id
+        owner_id = _resolve_owner_id(payload.owner_id, current_user_id)
         data = payload.model_dump(exclude_none=True, exclude={"draft_id", "owner_id"})
-        data["owner_id"] = current_user_id
+        data["owner_id"] = owner_id
 
         draft_to_delete = None
         if draft_id:
             draft_to_delete = session.get(AssignmentDraft, draft_id)
             if not draft_to_delete:
                 raise HTTPException(status_code=404, detail="Draft not found")
-            if draft_to_delete.owner_id != current_user_id:
+            if draft_to_delete.owner_id != owner_id:
                 raise HTTPException(
                     status_code=403,
                     detail="Draft does not belong to the authenticated instructor.",
