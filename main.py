@@ -30,9 +30,8 @@ app = FastAPI(
 )
 
 _default_allowed_origins = [
+    "https://amplify-lms-frontend.vercel.app",
     "http://localhost:3000",
-    "https://<YOUR_FRONTEND_DOMAIN>.vercel.app",
-    "*",
 ]
 
 _configured_origins = os.getenv("FRONTEND_ORIGINS")
@@ -44,7 +43,7 @@ else:
 
 cors_kwargs = {
     "allow_origins": allow_origins,
-    "allow_credentials": False,
+    "allow_credentials": True,
     "allow_methods": ["*"],
     "allow_headers": ["*"],
 }
