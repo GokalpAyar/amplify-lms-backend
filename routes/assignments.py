@@ -8,7 +8,7 @@ import logging
 import os
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Header, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlmodel import Session, select
 
@@ -30,6 +30,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/assignments", tags=["assignments"])
 DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() in {"1", "true", "yes", "on"}
+SENSITIVE_HEADERS = {"authorization", "cookie", "set-cookie"}
+
+
+def _snapshot_headers(headers) -> dict[str, str]:
+    """Return a sanitized copy of request headers for logging purposes."""
+    snapshot: dict[str, str] = {}
+    for key, value in headers.items():
+        if key.lower() in SENSITIVE_HEADERS:
+            snapshot[key] = "***redacted***"
+        else:
+            snapshot[key] = value
+    return snapshot
 
 
 def _resolve_owner_id(payload_owner_id: str | None, resolved_user_id: str) -> str:
@@ -145,15 +157,29 @@ def update_assignment_draft(
 @router.post("/", response_model=AssignmentOut, status_code=201)
 def create_assignment(
     payload: AssignmentCreate,
+    request: Request,
     session: Session = Depends(get_session),
     current_user_id: str | None = Depends(get_optional_user_id),
 ):
     """Create a new assignment owned by the authenticated instructor."""
 
     if not current_user_id:
+        headers_snapshot = _snapshot_headers(request.headers)
+        body_snapshot = payload.model_dump()
         if DEMO_MODE and payload.owner_id:
             current_user_id = payload.owner_id
         else:
+            failure_reason = (
+                "demo mode request missing owner_id"
+                if DEMO_MODE
+                else "missing Authorization header outside demo mode"
+            )
+            logger.warning(
+                "Assignment creation rejected: %s. headers=%s body=%s",
+                failure_reason,
+                headers_snapshot,
+                body_snapshot,
+            )
             if DEMO_MODE:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
