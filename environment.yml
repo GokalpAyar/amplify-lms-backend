@@ -1,0 +1,35 @@
+# environment.yml
+name: jsu
+dependencies:
+  - python
+  - pip
+  - langchain
+  - langchain-community
+  - langchain-core
+  - faiss-cpu
+  - transformers
+  - sentence-transformers
+  - python-docx
+  - pandas
+  - numpy
+  - streamlit
+  - python-dotenv
+  - pytorch
+  - pyspellchecker
+  - textblob
+  - spacy
+  - SpeechRecognition
+  - pypdf
+  - pdf2image
+  - torchvision
+  - inflect
+  - jsonlines
+  - pip:
+    - pyaudio
+    - pyttsx3
+    - sounddevice
+    - langchain-openai
+    - langchain-deepseek
+    - langchain-huggingface
+    - langchain-ollama
+    - qwen-vl-utils
