@@ -29,11 +29,24 @@ app = FastAPI(
     version="1.0.0",
 )
 
+_default_allowed_origins = [
+    "http://localhost:3000",
+    "https://<YOUR_FRONTEND_DOMAIN>.vercel.app",
+    "*",
+]
+
+_configured_origins = os.getenv("FRONTEND_ORIGINS")
+if _configured_origins:
+    parsed_origins = [origin.strip() for origin in _configured_origins.split(",") if origin.strip()]
+    allow_origins = list(dict.fromkeys(parsed_origins + _default_allowed_origins))
+else:
+    allow_origins = _default_allowed_origins
+
 cors_kwargs = {
-    "allow_origins": ["*"] if DEMO_MODE else ["*"],
+    "allow_origins": allow_origins,
     "allow_credentials": False,
-    "allow_methods": ["*"] if DEMO_MODE else ["*"],
-    "allow_headers": ["*"] if DEMO_MODE else ["*"],
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
 }
 
 app.add_middleware(
