@@ -123,6 +123,15 @@ class Response(SQLModel, table=True):
             nullable=False,
         ),
     )
+    owner_id: Optional[str] = Field(
+        default=None,
+        sa_column=Column(
+            String,
+            ForeignKey("user.id", ondelete="SET NULL"),
+            nullable=True,
+            index=True,
+        ),
+    )
     studentName: str
     jNumber: str
 

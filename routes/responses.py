@@ -62,7 +62,10 @@ async def create_response(
                 detail="You have already submitted this assignment",
             )
 
-        response = Response(**payload.model_dump())
+        response = Response(
+            **payload.model_dump(),
+            owner_id=assignment.owner_id,
+        )
 
         session.add(response)
         session.commit()
@@ -100,17 +103,7 @@ def list_responses(
     stmt = select(Response)
 
     if owner_id:
-        assignment_ids = [
-            assignment.id
-            for assignment in session.exec(
-                select(Assignment).where(Assignment.owner_id == owner_id)
-            ).all()
-        ]
-
-        if not assignment_ids:
-            return []
-
-        stmt = stmt.where(Response.assignment_id.in_(assignment_ids))
+        stmt = stmt.where(Response.owner_id == owner_id)
 
     responses = session.exec(stmt).all()
     return _serialize_response_list(responses)
