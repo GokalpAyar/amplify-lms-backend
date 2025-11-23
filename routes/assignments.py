@@ -21,7 +21,7 @@ from schemas import (
     AssignmentDraftUpdate,
     AssignmentOut,
 )
-from middleware.auth import require_user_id
+from middleware.auth import require_user_id, get_optional_user_id
 
 # ----------------------------------------------------------
 # Router setup
@@ -146,9 +146,24 @@ def update_assignment_draft(
 def create_assignment(
     payload: AssignmentCreate,
     session: Session = Depends(get_session),
-    current_user_id: str = Depends(require_user_id),
+    current_user_id: str | None = Depends(get_optional_user_id),
 ):
     """Create a new assignment owned by the authenticated instructor."""
+
+    if not current_user_id:
+        if DEMO_MODE and payload.owner_id:
+            current_user_id = payload.owner_id
+        else:
+            if DEMO_MODE:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Demo mode requires owner_id in the body when no Clerk token is provided.",
+                )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing Authorization header.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     try:
         draft_id = payload.draft_id

@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 _DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() in {"1", "true", "yes", "on"}
 _REQUEST_TIMEOUT = float(os.getenv("CLERK_HTTP_TIMEOUT", "5.0"))
 
-__all__ = ["require_user_id"]
+__all__ = ["require_user_id", "get_optional_user_id"]
 
 
 def require_user_id(
@@ -31,7 +31,43 @@ def require_user_id(
     While DEMO_MODE is enabled we allow overriding the user via the optional
     `X-Demo-User-Id` header (or `DEMO_USER_ID` env var) to keep local testing easy.
     """
+    user_id = _resolve_user_id(
+        authorization,
+        demo_user_override,
+        clerk_session_token,
+        clerk_user_id_header,
+        raise_on_missing=True,
+    )
+    # Since raise_on_missing=True, user_id is guaranteed to be not None
+    assert user_id is not None
+    return user_id
 
+
+def get_optional_user_id(
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    demo_user_override: str | None = Header(default=None, alias="X-Demo-User-Id"),
+    clerk_session_token: str | None = Header(default=None, alias="X-Clerk-Session-Token"),
+    clerk_user_id_header: str | None = Header(default=None, alias="X-Clerk-User-Id"),
+) -> str | None:
+    """
+    Resolve the current user's Clerk ID, returning None if missing.
+    """
+    return _resolve_user_id(
+        authorization,
+        demo_user_override,
+        clerk_session_token,
+        clerk_user_id_header,
+        raise_on_missing=False,
+    )
+
+
+def _resolve_user_id(
+    authorization: str | None,
+    demo_user_override: str | None,
+    clerk_session_token: str | None,
+    clerk_user_id_header: str | None,
+    raise_on_missing: bool,
+) -> str | None:
     token: str | None = None
     if authorization:
         token = _extract_bearer_token(authorization)
@@ -68,11 +104,15 @@ def require_user_id(
         if fallback:
             logger.debug("DEMO_MODE active — using fallback user id '%s'.", fallback)
             return fallback
-        raise _unauthorized(
-            "Demo mode requires a Clerk token or an X-Clerk-User-Id / X-Demo-User-Id header.",
-        )
+        if raise_on_missing:
+            raise _unauthorized(
+                "Demo mode requires a Clerk token or an X-Clerk-User-Id / X-Demo-User-Id header.",
+            )
+        return None
 
-    raise _unauthorized("Missing Authorization header.")
+    if raise_on_missing:
+        raise _unauthorized("Missing Authorization header.")
+    return None
 
 
 def _extract_bearer_token(authorization_header: str) -> str:
