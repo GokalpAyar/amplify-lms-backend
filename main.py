@@ -70,29 +70,12 @@ def _ensure_response_aux_columns() -> None:
                 "audio_file_url": "VARCHAR",
                 "student_accuracy_rating": "INTEGER",
                 "student_rating_comment": "TEXT",
-                "owner_id": "TEXT",
             }
             for column_name, column_type in migrations.items():
                 if column_name in columns:
                     continue
                 logger.info("Adding missing %s column to response table.", column_name)
                 connection.execute(text(f"ALTER TABLE response ADD COLUMN {column_name} {column_type}"))
-                columns.add(column_name)
-
-            if "owner_id" in columns:
-                logger.info("Backfilling response.owner_id from assignment.owner_id when missing.")
-                connection.execute(
-                    text(
-                        """
-                        UPDATE response
-                        SET owner_id = assignment.owner_id
-                        FROM assignment
-                        WHERE response.assignment_id = assignment.id
-                          AND assignment.owner_id IS NOT NULL
-                          AND (response.owner_id IS NULL OR response.owner_id = '')
-                        """
-                    )
-                )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Unable to verify or add response optional columns: %s", exc)
 

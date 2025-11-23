@@ -84,7 +84,6 @@ class ResponseOut(ResponseCreate):
     grade: Optional[float] = None
     student_accuracy_rating: Optional[int] = Field(default=None, ge=1, le=5)
     student_rating_comment: Optional[str] = None
-    owner_id: Optional[str] = None
 
     class Config:
         orm_mode = True
