@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useAuth } from "@clerk/clerk-react";
+import { useAuth, useUser } from "@clerk/clerk-react";
 import { uploadAssignment, type AssignmentUploadResponse } from "../services/api";
 
 export default function TeacherUpload() {
@@ -7,17 +7,18 @@ export default function TeacherUpload() {
   const [result, setResult] = useState<AssignmentUploadResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const { isLoaded, isSignedIn, userId, getToken } = useAuth();
+  const { isLoaded: isAuthLoaded, isSignedIn, getToken } = useAuth();
+  const { isLoaded: isUserLoaded, user: currentUser } = useUser();
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErr(null);
     if (!file) return;
-    if (!isLoaded) {
+    if (!isAuthLoaded || !isUserLoaded) {
       setErr("Authentication is still loading. Please try again.");
       return;
     }
-    if (!isSignedIn || !userId) {
+    if (!isSignedIn || !currentUser) {
       setErr("You must be signed in to upload assignments.");
       return;
     }
@@ -27,10 +28,15 @@ export default function TeacherUpload() {
       if (!clerkToken) {
         throw new Error("Unable to retrieve authentication token.");
       }
-      const data = await uploadAssignment(file, {
-        ownerId: userId,
-        clerkToken,
-      });
+      const data = await uploadAssignment(
+        {
+          file,
+          owner_id: currentUser.id,
+        },
+        {
+          clerkToken,
+        },
+      );
       setResult(data);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Upload failed";
@@ -45,7 +51,11 @@ export default function TeacherUpload() {
       <h1>Teacher: Upload Assignment (.docx or .txt)</h1>
       <form onSubmit={onSubmit} style={{ marginTop: 12 }}>
         <input type="file" accept=".docx,.txt" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-        <button type="submit" disabled={!file || loading || !isLoaded || !isSignedIn} style={{ marginLeft: 10 }}>
+        <button
+          type="submit"
+          disabled={!file || loading || !isAuthLoaded || !isUserLoaded || !isSignedIn}
+          style={{ marginLeft: 10 }}
+        >
           {loading ? "Uploading..." : "Upload"}
         </button>
       </form>

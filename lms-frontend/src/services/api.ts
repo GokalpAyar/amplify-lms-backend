@@ -6,21 +6,28 @@ export type AssignmentUploadResponse = {
   [key: string]: unknown;
 };
 
+type AssignmentUploadPayload = {
+  file: File;
+  owner_id: string;
+};
+
 type UploadAssignmentAuth = {
-  ownerId: string;
   clerkToken: string;
 };
 
-export async function uploadAssignment(file: File, auth: UploadAssignmentAuth): Promise<AssignmentUploadResponse> {
+export async function uploadAssignment(
+  payload: AssignmentUploadPayload,
+  auth: UploadAssignmentAuth,
+): Promise<AssignmentUploadResponse> {
   const fd = new FormData();
-  fd.append("file", file);
-  fd.append("owner_id", auth.ownerId);
+  fd.append("file", payload.file);
+  fd.append("owner_id", payload.owner_id);
   const res = await fetch(`${BASE_URL}/upload-assignment/`, {
     method: "POST",
     body: fd,
     headers: {
       "X-Clerk-Session-Token": auth.clerkToken,
-      "X-Clerk-User-Id": auth.ownerId,
+      "X-Clerk-User-Id": payload.owner_id,
     },
   });
   if (!res.ok) throw new Error("Upload failed");
