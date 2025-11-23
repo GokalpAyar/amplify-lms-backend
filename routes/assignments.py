@@ -32,62 +32,18 @@ router = APIRouter(prefix="/assignments", tags=["assignments"])
 DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() in {"1", "true", "yes", "on"}
 
 
-def _optional_user_id(
-    authorization: str | None = Header(default=None, alias="Authorization"),
-    demo_user_override: str | None = Header(default=None, alias="X-Demo-User-Id"),
-    clerk_session_token: str | None = Header(default=None, alias="X-Clerk-Session-Token"),
-    clerk_user_id_header: str | None = Header(default=None, alias="X-Clerk-User-Id"),
-) -> str | None:
-    """
-    Attempt to resolve a user id while permitting demo-mode calls without auth.
-    """
-
-    try:
-        return require_user_id(
-            authorization,
-            demo_user_override,
-            clerk_session_token,
-            clerk_user_id_header,
-        )
-    except HTTPException as exc:
-        if DEMO_MODE and exc.status_code == status.HTTP_401_UNAUTHORIZED:
-            logger.debug(
-                "Demo mode create_assignment without Clerk token detected; "
-                "falling back to body owner_id.",
-            )
-            return None
-        raise
-
-
-def _resolve_owner_id(payload_owner_id: str | None, resolved_user_id: str | None) -> str:
+def _resolve_owner_id(payload_owner_id: str | None, resolved_user_id: str) -> str:
     """Determine which owner id to persist on the assignment record."""
-
-    if resolved_user_id:
-        if payload_owner_id and payload_owner_id != resolved_user_id:
-            logger.warning(
-                "Payload owner_id '%s' does not match authenticated user '%s'; "
-                "using the authenticated id.",
-                payload_owner_id,
-                resolved_user_id,
-            )
-        return resolved_user_id
-
-    if DEMO_MODE:
-        if payload_owner_id:
-            return payload_owner_id
-        fallback = os.getenv("DEMO_USER_ID")
-        if fallback:
-            logger.debug("Using DEMO_USER_ID fallback owner '%s' for assignment.", fallback)
-            return fallback
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Demo mode requires owner_id in the body when no Clerk token is provided.",
+    
+    # Always use the authenticated user ID from Clerk token
+    if payload_owner_id and payload_owner_id != resolved_user_id:
+        logger.warning(
+            "Payload owner_id '%s' does not match authenticated user '%s'; "
+            "using the authenticated id.",
+            payload_owner_id,
+            resolved_user_id,
         )
-
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Authorization header with a valid Clerk token is required.",
-    )
+    return resolved_user_id
 
 
 # ----------------------------------------------------------
@@ -97,11 +53,14 @@ def _resolve_owner_id(payload_owner_id: str | None, resolved_user_id: str | None
 def create_assignment_draft(
     payload: AssignmentDraftCreate,
     session: Session = Depends(get_session),
+    current_user_id: str = Depends(require_user_id),
 ):
-    """Create a new assignment draft for the given owner."""
+    """Create a new assignment draft for the authenticated owner."""
 
     try:
         data = payload.model_dump(exclude_none=True)
+        # Always use the authenticated user ID
+        data["owner_id"] = current_user_id
         draft = AssignmentDraft(**data)
         session.add(draft)
         session.commit()
@@ -112,20 +71,23 @@ def create_assignment_draft(
         raise
     except Exception as exc:  # noqa: BLE001
         session.rollback()
-        logger.exception("Failed to create assignment draft for owner '%s'", payload.owner_id)
+        logger.exception("Failed to create assignment draft for owner '%s'", current_user_id)
         raise HTTPException(
             status_code=500,
             detail="Unable to save assignment draft right now.",
         ) from exc
 
 
-@router.get("/drafts/{user_id}", response_model=list[AssignmentDraftOut])
-def list_assignment_drafts(user_id: str, session: Session = Depends(get_session)):
-    """Return all drafts for a specific instructor ordered by last update."""
+@router.get("/drafts", response_model=list[AssignmentDraftOut])
+def list_assignment_drafts(
+    session: Session = Depends(get_session),
+    current_user_id: str = Depends(require_user_id),
+):
+    """Return all drafts for the authenticated instructor ordered by last update."""
 
     stmt = (
         select(AssignmentDraft)
-        .where(AssignmentDraft.owner_id == user_id)
+        .where(AssignmentDraft.owner_id == current_user_id)
         .order_by(AssignmentDraft.updated_at.desc())
     )
     return session.exec(stmt).all()
@@ -136,14 +98,25 @@ def update_assignment_draft(
     draft_id: str,
     payload: AssignmentDraftUpdate,
     session: Session = Depends(get_session),
+    current_user_id: str = Depends(require_user_id),
 ):
     """Update mutable fields on a draft. Used by 30-second auto-save."""
 
     draft = session.get(AssignmentDraft, draft_id)
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
+    
+    # Ensure the draft belongs to the authenticated user
+    if draft.owner_id != current_user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Draft does not belong to the authenticated user.",
+        )
 
     update_data = payload.model_dump(exclude_unset=True)
+    # Don't allow changing the owner_id
+    update_data.pop("owner_id", None)
+    
     if update_data:
         for key, value in update_data.items():
             setattr(draft, key, value)
@@ -173,7 +146,7 @@ def update_assignment_draft(
 def create_assignment(
     payload: AssignmentCreate,
     session: Session = Depends(get_session),
-    current_user_id: str | None = Depends(_optional_user_id),
+    current_user_id: str = Depends(require_user_id),
 ):
     """Create a new assignment owned by the authenticated instructor."""
 

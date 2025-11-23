@@ -48,7 +48,7 @@ class AssignmentDraftBase(BaseModel):
 
 
 class AssignmentDraftCreate(AssignmentDraftBase):
-    owner_id: str
+    owner_id: Optional[str] = None  # Auto-populated from Clerk token
 
 
 class AssignmentDraftUpdate(BaseModel):
