@@ -1,22 +1,40 @@
 import { useState } from "react";
-import { uploadAssignment } from "../services/api";
+import { useAuth } from "@clerk/clerk-react";
+import { uploadAssignment, type AssignmentUploadResponse } from "../services/api";
 
 export default function TeacherUpload() {
   const [file, setFile] = useState<File | null>(null);
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<AssignmentUploadResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const { isLoaded, isSignedIn, userId, getToken } = useAuth();
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErr(null);
     if (!file) return;
+    if (!isLoaded) {
+      setErr("Authentication is still loading. Please try again.");
+      return;
+    }
+    if (!isSignedIn || !userId) {
+      setErr("You must be signed in to upload assignments.");
+      return;
+    }
     setLoading(true);
     try {
-      const data = await uploadAssignment(file);
+      const clerkToken = await getToken();
+      if (!clerkToken) {
+        throw new Error("Unable to retrieve authentication token.");
+      }
+      const data = await uploadAssignment(file, {
+        ownerId: userId,
+        clerkToken,
+      });
       setResult(data);
-    } catch (e: any) {
-      setErr(e?.message || "Upload failed");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Upload failed";
+      setErr(message);
     } finally {
       setLoading(false);
     }
@@ -27,7 +45,7 @@ export default function TeacherUpload() {
       <h1>Teacher: Upload Assignment (.docx or .txt)</h1>
       <form onSubmit={onSubmit} style={{ marginTop: 12 }}>
         <input type="file" accept=".docx,.txt" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-        <button type="submit" disabled={!file || loading} style={{ marginLeft: 10 }}>
+        <button type="submit" disabled={!file || loading || !isLoaded || !isSignedIn} style={{ marginLeft: 10 }}>
           {loading ? "Uploading..." : "Upload"}
         </button>
       </form>
@@ -36,8 +54,12 @@ export default function TeacherUpload() {
 
       {result && (
         <div style={{ marginTop: 16, border: "1px solid #ddd", padding: 12 }}>
-          <p><b>Assignment ID:</b> {result.assignmentId}</p>
-          <p><b>Questions:</b> {result.questionsCount}</p>
+          <p>
+            <b>Assignment ID:</b> {result.assignmentId}
+          </p>
+          <p>
+            <b>Questions:</b> {result.questionsCount}
+          </p>
           <p>
             <b>Student Link:</b>{" "}
             <a href={`/student/${result.assignmentId}`}>/student/{result.assignmentId}</a>

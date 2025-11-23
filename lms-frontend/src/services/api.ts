@@ -1,11 +1,31 @@
 export const BASE_URL = import.meta.env.VITE_API_URL as string;
 
-export async function uploadAssignment(file: File) {
+export type AssignmentUploadResponse = {
+  assignmentId: string;
+  questionsCount: number;
+  [key: string]: unknown;
+};
+
+type UploadAssignmentAuth = {
+  ownerId: string;
+  clerkToken: string;
+};
+
+export async function uploadAssignment(file: File, auth: UploadAssignmentAuth): Promise<AssignmentUploadResponse> {
   const fd = new FormData();
   fd.append("file", file);
-  const res = await fetch(`${BASE_URL}/upload-assignment/`, { method: "POST", body: fd });
+  fd.append("owner_id", auth.ownerId);
+  const res = await fetch(`${BASE_URL}/upload-assignment/`, {
+    method: "POST",
+    body: fd,
+    headers: {
+      "X-Clerk-Session-Token": auth.clerkToken,
+      "X-Clerk-User-Id": auth.ownerId,
+    },
+  });
   if (!res.ok) throw new Error("Upload failed");
-  return res.json();
+  const data = (await res.json()) as AssignmentUploadResponse;
+  return data;
 }
 
 export async function getAssignment(assignmentId: string) {
@@ -14,7 +34,7 @@ export async function getAssignment(assignmentId: string) {
   return res.json();
 }
 
-export async function submitResponses(payload: any) {
+export async function submitResponses(payload: unknown) {
   const res = await fetch(`${BASE_URL}/submissions/`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
