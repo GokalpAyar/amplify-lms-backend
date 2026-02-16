@@ -1,13 +1,14 @@
 # routes/assignments.py
 # ==========================================================
 # Routes for creating and retrieving assignments.
-# Demo mode removes JWT requirements for easier testing.
+# Instructors authenticate via Supabase JWT.
+# Students do NOT log in (they can load assignments by id).
 # ==========================================================
 
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlmodel import Session, select
 
@@ -20,27 +21,28 @@ from schemas import (
     AssignmentDraftUpdate,
     AssignmentOut,
 )
+from supabase_auth import get_current_instructor
 
-# ----------------------------------------------------------
-# Router setup
-# ----------------------------------------------------------
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/assignments", tags=["assignments"])
 
 
 # ----------------------------------------------------------
-# Draft Endpoints
+# Draft Endpoints (Instructor-only)
 # ----------------------------------------------------------
 @router.post("/drafts", response_model=AssignmentDraftOut, status_code=201)
 def create_assignment_draft(
     payload: AssignmentDraftCreate,
     session: Session = Depends(get_session),
+    user=Depends(get_current_instructor),
 ):
-    """Create a new assignment draft for the given owner."""
-
+    """Create a new assignment draft for the logged-in instructor."""
     try:
-        data = payload.model_dump(exclude_none=True)
+        # NEVER trust owner_id from client
+        data = payload.model_dump(exclude_none=True, exclude={"owner_id"})
+        data["owner_id"] = user["user_id"]
+
         draft = AssignmentDraft(**data)
         session.add(draft)
         session.commit()
@@ -51,23 +53,23 @@ def create_assignment_draft(
         raise
     except Exception as exc:  # noqa: BLE001
         session.rollback()
-        logger.exception("Failed to create assignment draft for owner '%s'", payload.owner_id)
+        logger.exception("Failed to create assignment draft for user '%s'", user["user_id"])
         raise HTTPException(
             status_code=500,
             detail="Unable to save assignment draft right now.",
         ) from exc
 
 
-@router.get("/drafts/{user_id}", response_model=list[AssignmentDraftOut])
-def list_assignment_drafts(user_id: str, session: Session = Depends(get_session)):
-    """Return all drafts for a specific instructor ordered by last update."""
-
-    stmt = (
-        select(AssignmentDraft)
-        .where(AssignmentDraft.owner_id == user_id)
-        .order_by(AssignmentDraft.updated_at.desc())
-    )
-    return session.exec(stmt).all()
+@router.get("/drafts/me", response_model=list[AssignmentDraftOut])
+def list_my_assignment_drafts(
+    session: Session = Depends(get_session),
+    user=Depends(get_current_instructor),
+):
+    """List drafts for the logged-in instructor."""
+    drafts = session.exec(
+        select(AssignmentDraft).where(AssignmentDraft.owner_id == user["user_id"])
+    ).all()
+    return drafts
 
 
 @router.patch("/drafts/{draft_id}", response_model=AssignmentDraftOut)
@@ -75,14 +77,19 @@ def update_assignment_draft(
     draft_id: str,
     payload: AssignmentDraftUpdate,
     session: Session = Depends(get_session),
+    user=Depends(get_current_instructor),
 ):
     """Update mutable fields on a draft. Used by 30-second auto-save."""
-
     draft = session.get(AssignmentDraft, draft_id)
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
 
-    update_data = payload.model_dump(exclude_unset=True)
+    # 🔒 Only owner can update
+    if str(draft.owner_id) != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Not allowed to update this draft")
+
+    # Do not allow changing ownership
+    update_data = payload.model_dump(exclude_unset=True, exclude={"owner_id"})
     if update_data:
         for key, value in update_data.items():
             setattr(draft, key, value)
@@ -104,31 +111,57 @@ def update_assignment_draft(
             detail="Unable to update assignment draft right now.",
         ) from exc
 
+
+@router.delete("/drafts/{draft_id}")
+def delete_assignment_draft(
+    draft_id: str,
+    session: Session = Depends(get_session),
+    user=Depends(get_current_instructor),
+):
+    """Delete a draft (instructor-only)."""
+    draft = session.get(AssignmentDraft, draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    if str(draft.owner_id) != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Not allowed to delete this draft")
+
+    try:
+        session.delete(draft)
+        session.commit()
+        return {"message": "Draft deleted successfully."}
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        logger.exception("Failed to delete draft '%s': %s", draft_id, exc)
+        raise HTTPException(status_code=500, detail="Unable to delete draft right now.") from exc
+
+
 # ----------------------------------------------------------
-# POST /assignments/
-# Instructor creates new assignment
+# Assignments (Instructor-only create/list/delete)
 # ----------------------------------------------------------
 @router.post("/", response_model=AssignmentOut)
 def create_assignment(
     payload: AssignmentCreate,
     session: Session = Depends(get_session),
+    user=Depends(get_current_instructor),
 ):
-    """Create a new assignment (owner_id optional in demo mode)."""
-
+    """Create a new assignment (owner_id derived from Supabase token)."""
     try:
         draft_id = payload.draft_id
-        data = payload.model_dump(exclude_none=True, exclude={"draft_id"})
+
+        # NEVER trust owner_id from client
+        data = payload.model_dump(exclude_none=True, exclude={"draft_id", "owner_id"})
+        data["owner_id"] = user["user_id"]
 
         draft_to_delete = None
         if draft_id:
             draft_to_delete = session.get(AssignmentDraft, draft_id)
             if not draft_to_delete:
                 raise HTTPException(status_code=404, detail="Draft not found")
-            if payload.owner_id and draft_to_delete.owner_id != payload.owner_id:
-                raise HTTPException(
-                    status_code=403,
-                    detail="Draft does not belong to the provided owner.",
-                )
+
+            # draft must belong to logged-in instructor
+            if str(draft_to_delete.owner_id) != user["user_id"]:
+                raise HTTPException(status_code=403, detail="Draft does not belong to you.")
 
         assignment = Assignment(**data)
 
@@ -139,6 +172,7 @@ def create_assignment(
         session.refresh(assignment)
 
         return assignment
+
     except HTTPException:
         session.rollback()
         raise
@@ -151,50 +185,36 @@ def create_assignment(
         ) from exc
 
 
-# ----------------------------------------------------------
-# GET /assignments/{assignment_id}
-# Public — students can load assignments
-# ----------------------------------------------------------
-@router.get("/{assignment_id}", response_model=AssignmentOut)
-def get_assignment(assignment_id: str, session: Session = Depends(get_session)):
-    assignment = session.get(Assignment, assignment_id)
-    if not assignment:
-        raise HTTPException(status_code=404, detail="Assignment not found")
-    return assignment
-
-
-# ----------------------------------------------------------
-# GET /assignments/
-# Instructor can view only their assignments
-# ----------------------------------------------------------
 @router.get("/", response_model=list[AssignmentOut])
 def list_assignments(
-    owner_id: str | None = Query(
-        default=None,
-        description="Optionally filter assignments by owner_id.",
-    ),
     session: Session = Depends(get_session),
+    user=Depends(get_current_instructor),
 ):
-    stmt = select(Assignment)
-    if owner_id:
-        stmt = stmt.where(Assignment.owner_id == owner_id)
+    """List assignments belonging to the logged-in instructor."""
+    stmt = select(Assignment).where(Assignment.owner_id == user["user_id"])
     return session.exec(stmt).all()
 
 
-# ----------------------------------------------------------
-# DELETE /assignments/{assignment_id}
-# Instructor removes assignment + its responses
-# ----------------------------------------------------------
 @router.delete("/{assignment_id}")
-def delete_assignment(assignment_id: str, session: Session = Depends(get_session)):
+def delete_assignment(
+    assignment_id: str,
+    session: Session = Depends(get_session),
+    user=Depends(get_current_instructor),
+):
+    """Delete an assignment and its responses (instructor-only)."""
     assignment = session.get(Assignment, assignment_id)
     if not assignment:
         raise HTTPException(status_code=404, detail="Assignment not found")
 
+    # 🔒 Ownership check
+    if str(assignment.owner_id) != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Not allowed to delete this assignment")
+
     logger.info(
-        "Deleting assignment '%s' (%s)",
+        "Deleting assignment '%s' (%s) by user %s",
         assignment_id,
         assignment.title,
+        user["user_id"],
     )
 
     deleted_responses = 0
@@ -255,20 +275,18 @@ def delete_assignment(assignment_id: str, session: Session = Depends(get_session
             detail="Unable to delete assignment right now.",
         ) from exc
 
-    response_body: dict[str, object] = {
+    return {
         "message": "Assignment deleted successfully.",
         "responses_deleted": deleted_responses,
     }
 
-    return response_body
-
 
 # ----------------------------------------------------------
-# OPTIONAL: Manual token generation for debugging
+# Public — students can load assignments by id
 # ----------------------------------------------------------
-@router.post("/token")
-def generate_token():
-    raise HTTPException(
-        status_code=503,
-        detail="JWT token generation is disabled while demo mode is active.",
-    )
+@router.get("/{assignment_id}", response_model=AssignmentOut)
+def get_assignment(assignment_id: str, session: Session = Depends(get_session)):
+    assignment = session.get(Assignment, assignment_id)
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    return assignment

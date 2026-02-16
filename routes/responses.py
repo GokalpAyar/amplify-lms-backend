@@ -8,12 +8,13 @@ from datetime import datetime
 from typing import Any, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from jose import JWTError
 from pydantic import ValidationError
 from sqlmodel import Session, select
 from starlette.datastructures import FormData
 
 from db import get_session
-from models import Assignment, Response, AccuracyRating
+from models import AccuracyRating, Assignment, Response
 from schemas import (
     AccuracyRatingOut,
     AccuracyRatingPayload,
@@ -21,18 +22,24 @@ from schemas import (
     ResponseOut,
     StudentAccuracyRatingPayload,
 )
+from supabase_auth import get_current_instructor
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/responses", tags=["responses"])
 
 
+# --------------------------------------------------------------------------- #
+# Public (students, no login)
+# --------------------------------------------------------------------------- #
 @router.post("/", response_model=ResponseOut)
 async def create_response(
     request: Request,
     session: Session = Depends(get_session),
 ):
-    """Create a new student response without persisting audio attachments."""
+    """Create a new student response without persisting audio attachments.
+    Public endpoint: students do NOT log in.
+    """
 
     payload = await _extract_payload(request)
 
@@ -80,52 +87,65 @@ async def create_response(
         raise
     except Exception as exc:  # noqa: BLE001
         session.rollback()
-        logger.exception("Failed to store submission for assignment %s: %s", payload.assignment_id, exc)
+        logger.exception(
+            "Failed to store submission for assignment %s: %s",
+            payload.assignment_id,
+            exc,
+        )
         raise HTTPException(
             status_code=500,
             detail="Unable to store response right now.",
         ) from exc
 
 
+# --------------------------------------------------------------------------- #
+# Instructor-only (Supabase login required)
+# --------------------------------------------------------------------------- #
 @router.get("/", response_model=list[ResponseOut])
 def list_responses(
-    owner_id: str | None = Query(
-        default=None,
-        description="Optionally filter responses by assignment owner_id.",
-    ),
     session: Session = Depends(get_session),
+    user=Depends(get_current_instructor),
 ):
-    """List responses, optionally filtering by instructor owner_id (demo mode)."""
+    """List responses for the logged-in instructor only."""
 
-    stmt = select(Response)
-
-    if owner_id:
-        assignment_ids = [
-            assignment.id
-            for assignment in session.exec(
-                select(Assignment).where(Assignment.owner_id == owner_id)
-            ).all()
-        ]
+    try:
+        assignment_ids = session.exec(
+            select(Assignment.id).where(Assignment.owner_id == user["user_id"])
+        ).all()
 
         if not assignment_ids:
             return []
 
-        stmt = stmt.where(Response.assignment_id.in_(assignment_ids))
+        responses = session.exec(
+            select(Response).where(Response.assignment_id.in_(assignment_ids))
+        ).all()
 
-    responses = session.exec(stmt).all()
-    return _serialize_response_list(responses)
+        return _serialize_response_list(responses)
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to list responses for user %s: %s", user["user_id"], exc)
+        raise HTTPException(status_code=500, detail="Unable to list responses right now.") from exc
 
 
 @router.get("/{assignment_id}", response_model=list[ResponseOut])
 def get_responses_for_assignment(
     assignment_id: str,
     session: Session = Depends(get_session),
+    user=Depends(get_current_instructor),
 ):
-    """Get responses for a specific assignment (no authentication required)."""
+    """Get responses for a specific assignment (instructor-only)."""
 
     assignment = session.get(Assignment, assignment_id)
     if not assignment:
         raise HTTPException(status_code=404, detail="Assignment not found")
+
+    # Only the owner can view submissions
+    if str(assignment.owner_id) != user["user_id"]:
+        raise HTTPException(
+            status_code=403,
+            detail="Not allowed to view submissions for this assignment",
+        )
 
     responses = session.exec(
         select(Response).where(Response.assignment_id == assignment_id)
@@ -139,12 +159,20 @@ def upsert_accuracy_rating(
     response_id: str,
     payload: AccuracyRatingPayload,
     session: Session = Depends(get_session),
+    user=Depends(get_current_instructor),
 ):
-    """Create or update the transcription accuracy rating for a response."""
+    """Create or update the transcription accuracy rating for a response (instructor-only)."""
 
     response = session.get(Response, response_id)
     if not response:
         raise HTTPException(status_code=404, detail="Response not found")
+
+    # Ensure the response belongs to an assignment owned by the instructor
+    assignment = session.get(Assignment, response.assignment_id)
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+    if str(assignment.owner_id) != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Not allowed")
 
     rating_record = session.exec(
         select(AccuracyRating).where(AccuracyRating.response_id == response_id)
@@ -186,7 +214,9 @@ def update_student_accuracy_rating(
     payload: StudentAccuracyRatingPayload,
     session: Session = Depends(get_session),
 ):
-    """Allow students to rate the accuracy of their own transcript."""
+    """Allow students to rate the accuracy of their own transcript.
+    Public endpoint (no login). If you want to lock this down later, we can.
+    """
 
     response = session.get(Response, response_id)
     if not response:
@@ -296,4 +326,3 @@ def _serialize_response(response: Response) -> dict[str, Any]:
 
 def _serialize_response_list(responses: Sequence[Response]) -> list[dict[str, Any]]:
     return [_serialize_response(response) for response in responses]
-
