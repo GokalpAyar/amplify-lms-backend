@@ -7,21 +7,35 @@ ALGORITHMS = ["HS256"]
 
 def get_current_instructor(authorization: str = Header(None)):
     if not SUPABASE_JWT_SECRET:
-        raise HTTPException(status_code=500, detail="SUPABASE_JWT_SECRET is not set on the server")
+        raise HTTPException(
+            status_code=500,
+            detail="SUPABASE_JWT_SECRET is not set on the server",
+        )
 
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing Authorization Bearer token")
+        raise HTTPException(
+            status_code=401,
+            detail="Missing Authorization Bearer token",
+        )
 
     token = authorization.split(" ", 1)[1].strip()
 
     try:
-        payload = jwt.decode(token, SUPABASE_JWT_SECRET, algorithms=ALGORITHMS)
-    except JWTError:
+        payload = jwt.decode(
+            token,
+            SUPABASE_JWT_SECRET,
+            algorithms=ALGORITHMS,
+            options={"verify_aud": False},  # ✅ important fix
+        )
+    except JWTError as e:
+        print("JWT decode error:", e)
         raise HTTPException(status_code=401, detail="Invalid token")
 
     user_id = payload.get("sub")
     if not user_id:
         raise HTTPException(status_code=401, detail="Token missing sub")
 
-    return {"user_id": user_id, "payload": payload}
-
+    return {
+        "user_id": user_id,
+        "payload": payload,
+    }

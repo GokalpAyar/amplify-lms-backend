@@ -1,5 +1,5 @@
 # main.py
-# FastAPI entry point configured for Supabase + Render/Railway deployment.
+# FastAPI entry point configured for Supabase + Render deployment.
 
 from __future__ import annotations
 
@@ -29,29 +29,48 @@ app = FastAPI(
     version="1.0.0",
 )
 
-cors_kwargs = {
-    "allow_origins": ["*"] if DEMO_MODE else ["*"],
-    "allow_credentials": False,
-    "allow_methods": ["*"] if DEMO_MODE else ["*"],
-    "allow_headers": ["*"] if DEMO_MODE else ["*"],
-}
+# -------------------------------------------------------------------
+# CORS (IMPORTANT for Vercel + Supabase login)
+# -------------------------------------------------------------------
+# Set this in Render:
+# FRONTEND_ORIGINS=https://amplify-lms-frontend.vercel.app
+#
+# You can also include dev origins:
+# FRONTEND_ORIGINS=https://amplify-lms-frontend.vercel.app,http://localhost:5173,http://localhost:3000
+#
+FRONTEND_ORIGINS = os.getenv(
+    "FRONTEND_ORIGINS",
+    "https://amplify-lms-frontend.vercel.app,http://localhost:5173,http://localhost:3000",
+)
+
+allowed_origins = [o.strip() for o in FRONTEND_ORIGINS.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
-    **cors_kwargs,
+    allow_origins=allowed_origins,
+    allow_credentials=False,  # required if your frontend uses cookies/session; still OK with Bearer tokens
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
+# -------------------------------------------------------------------
+# Routers
+# -------------------------------------------------------------------
 app.include_router(auth.router)
 app.include_router(assignments.router)
 app.include_router(responses.router)
 app.include_router(speech.router)
 
+# Keep old users auth during transition (recommended).
+# Remove later after Supabase login is fully tested end-to-end.
 if not DEMO_MODE:
     from routes import users  # imported lazily to avoid unused dependency in demo mode
 
     app.include_router(users.router)
 
-
+# -------------------------------------------------------------------
+# Startup
+# -------------------------------------------------------------------
 @app.on_event("startup")
 def init_database() -> None:
     """Ensure tables and columns exist before serving traffic."""
@@ -65,7 +84,16 @@ def _ensure_response_aux_columns() -> None:
     try:
         with engine.begin() as connection:
             inspector = inspect(connection)
-            columns = {column["name"] for column in inspector.get_columns("response")}
+
+            # NOTE: Your new tables are likely named 'responses' not 'response'.
+            # This migration is only for legacy installs.
+            table_name = "response"
+            try:
+                columns = {column["name"] for column in inspector.get_columns(table_name)}
+            except Exception:
+                # If legacy table doesn't exist, skip quietly.
+                return
+
             migrations: dict[str, str] = {
                 "audio_file_url": "VARCHAR",
                 "student_accuracy_rating": "INTEGER",
@@ -74,12 +102,17 @@ def _ensure_response_aux_columns() -> None:
             for column_name, column_type in migrations.items():
                 if column_name in columns:
                     continue
-                logger.info("Adding missing %s column to response table.", column_name)
-                connection.execute(text(f"ALTER TABLE response ADD COLUMN {column_name} {column_type}"))
+                logger.info("Adding missing %s column to %s table.", column_name, table_name)
+                connection.execute(
+                    text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+                )
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Unable to verify or add response optional columns: %s", exc)
+        logger.warning("Unable to verify or add legacy response optional columns: %s", exc)
 
 
+# -------------------------------------------------------------------
+# Health / Root
+# -------------------------------------------------------------------
 @app.get("/health")
 def health():
     return {"status": "ok"}
