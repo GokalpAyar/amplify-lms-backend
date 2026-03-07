@@ -33,15 +33,6 @@ app = FastAPI(
 # -------------------------------------------------------------------
 # CORS (IMPORTANT for Vercel + Supabase Bearer-token auth)
 # -------------------------------------------------------------------
-# Render env examples:
-# FRONTEND_ORIGINS=https://amplify-lms-frontend.vercel.app,http://localhost:5173,http://localhost:3000
-# FRONTEND_ORIGIN=https://amplify-lms-frontend.vercel.app
-# FRONTEND_ORIGIN_REGEX=https://.*\.vercel\.app
-#
-# IMPORTANT:
-# - no quotes
-# - no trailing slash
-#
 FRONTEND_ORIGINS = os.getenv(
     "FRONTEND_ORIGINS",
     "https://amplify-lms-frontend.vercel.app,http://localhost:5173,http://localhost:3000",
@@ -63,7 +54,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_origin_regex=FRONTEND_ORIGIN_REGEX or None,
-    allow_credentials=False,  # Bearer token auth, not cookie auth
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -76,10 +67,8 @@ app.include_router(assignments.router)
 app.include_router(responses.router)
 app.include_router(speech.router)
 
-# Keep old users auth during transition (recommended).
-# Remove later after Supabase login is fully tested end-to-end.
 if not DEMO_MODE:
-    from routes import users  # imported lazily to avoid unused dependency in demo mode
+    from routes import users
 
     app.include_router(users.router)
 
@@ -92,21 +81,19 @@ def init_database() -> None:
     logger.info("Ensuring SQLModel metadata is up to date (demo_mode=%s)", DEMO_MODE)
     SQLModel.metadata.create_all(engine)
     _ensure_response_aux_columns()
+    _drop_legacy_owner_foreign_keys()
 
 
 def _ensure_response_aux_columns() -> None:
-    """Add optional columns to response table when missing (for legacy databases)."""
+    """Add optional columns to legacy response table when missing."""
     try:
         with engine.begin() as connection:
             inspector = inspect(connection)
 
-            # NOTE: Your new tables are likely named 'responses' not 'response'.
-            # This migration is only for legacy installs.
             table_name = "response"
             try:
                 columns = {column["name"] for column in inspector.get_columns(table_name)}
             except Exception:
-                # If legacy table doesn't exist, skip quietly.
                 return
 
             migrations: dict[str, str] = {
@@ -114,15 +101,38 @@ def _ensure_response_aux_columns() -> None:
                 "student_accuracy_rating": "INTEGER",
                 "student_rating_comment": "TEXT",
             }
+
             for column_name, column_type in migrations.items():
                 if column_name in columns:
                     continue
                 logger.info("Adding missing %s column to %s table.", column_name, table_name)
                 connection.execute(
-                    text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
+                    text(f'ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}')
                 )
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("Unable to verify or add legacy response optional columns: %s", exc)
+
+
+def _drop_legacy_owner_foreign_keys() -> None:
+    """
+    Remove old foreign keys that require owner_id to exist in the local user table.
+    This is needed now that owner_id stores the Supabase user id directly.
+    """
+    statements = [
+        "ALTER TABLE assignment DROP CONSTRAINT IF EXISTS assignment_owner_id_fkey",
+        "ALTER TABLE assignmentdraft DROP CONSTRAINT IF EXISTS assignmentdraft_owner_id_fkey",
+    ]
+
+    try:
+        with engine.begin() as connection:
+            for stmt in statements:
+                try:
+                    logger.info("Running migration: %s", stmt)
+                    connection.execute(text(stmt))
+                except Exception as exc:
+                    logger.warning("Could not run migration '%s': %s", stmt, exc)
+    except Exception as exc:
+        logger.warning("Unable to drop legacy owner foreign keys: %s", exc)
 
 
 # -------------------------------------------------------------------

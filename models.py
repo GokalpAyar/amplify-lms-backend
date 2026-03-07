@@ -1,7 +1,7 @@
 # models.py
 # ==========================================================
 # SQLModel database models for Amplify-LMS
-# Supports authentication + ownership (User ↔ Assignment)
+# Supports authentication + ownership
 # Compatible with FastAPI + SQLAlchemy + Pydantic v2
 # ==========================================================
 
@@ -15,27 +15,23 @@ from pydantic import BaseModel
 
 # ---------------------- Pydantic Models for API ----------------------
 class UserCreate(BaseModel):
-    """Model for user registration/login"""
     email: str
     password: str
     name: Optional[str] = None
 
 
 class UserLogin(BaseModel):
-    """Model for user login payload"""
     email: str
     password: str
 
 
 class UserResponse(BaseModel):
-    """Model for returning user data (without password)"""
     id: str
     email: str
     role: str
 
 
 class Token(BaseModel):
-    """Model for JWT token response"""
     access_token: str
     token_type: str
     user: UserResponse
@@ -44,8 +40,8 @@ class Token(BaseModel):
 # ---------------------- User Model ----------------------
 class User(SQLModel, table=True):
     """
-    Instructor or student user model.
-    For now, only instructors are supported for authentication and assignment ownership.
+    Legacy/local user table.
+    Supabase auth is used for instructor authentication now.
     """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
@@ -54,9 +50,6 @@ class User(SQLModel, table=True):
     role: str = "instructor"
     name: Optional[str] = None
 
-    assignments: List["Assignment"] = Relationship(back_populates="owner")
-    drafts: List["AssignmentDraft"] = Relationship(back_populates="owner")
-
     model_config = {"arbitrary_types_allowed": True}
 
 
@@ -64,7 +57,7 @@ class User(SQLModel, table=True):
 class Assignment(SQLModel, table=True):
     """
     Stores teacher-created assignments with metadata and questions.
-    Each assignment belongs to an instructor (owner_id).
+    owner_id stores the Supabase user id directly.
     """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
@@ -75,12 +68,12 @@ class Assignment(SQLModel, table=True):
     isQuiz: bool = False
     assignmentTimeLimit: Optional[int] = None
 
-    # IMPORTANT FIX
     # frontend sends questions as a list
     questions: dict | list = Field(sa_column=Column(JSON))
 
-    owner_id: Optional[str] = Field(default=None, foreign_key="user.id")
-    owner: Optional[User] = Relationship(back_populates="assignments")
+    # IMPORTANT:
+    # no foreign key to local user table
+    owner_id: Optional[str] = Field(default=None, index=True)
 
     responses: List["Response"] = Relationship(
         back_populates="assignment",
@@ -97,17 +90,18 @@ class Assignment(SQLModel, table=True):
 class AssignmentDraft(SQLModel, table=True):
     """
     Stores in-progress assignments so instructors don't lose work mid-creation.
+    owner_id stores the Supabase user id directly.
     """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
 
     title: Optional[str] = None
     description: Optional[str] = None
-
     questions: dict | list | None = Field(default=None, sa_column=Column(JSON))
 
-    owner_id: str = Field(foreign_key="user.id", index=True)
-    owner: Optional[User] = Relationship(back_populates="drafts")
+    # IMPORTANT:
+    # no foreign key to local user table
+    owner_id: str = Field(index=True)
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -137,7 +131,6 @@ class Response(SQLModel, table=True):
 
     answers: dict = Field(sa_column=Column(JSON))
     transcripts: dict = Field(sa_column=Column(JSON))
-
     audio_file_url: Optional[str] = None
 
     student_accuracy_rating: Optional[int] = Field(
@@ -154,7 +147,6 @@ class Response(SQLModel, table=True):
     )
 
     submittedAt: datetime = Field(default_factory=datetime.utcnow)
-
     grade: Optional[float] = None
 
     assignment: Optional[Assignment] = Relationship(
@@ -183,7 +175,6 @@ class AccuracyRating(SQLModel, table=True):
     )
 
     rating: int = Field(default=5, ge=1, le=5)
-
     bias_notes: Optional[str] = None
     needs_review: bool = Field(default=False)
 
