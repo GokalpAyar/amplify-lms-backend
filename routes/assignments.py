@@ -87,12 +87,19 @@ def upsert_current_assignment_draft(
     except HTTPException:
         session.rollback()
         raise
+    except IntegrityError as exc:
+        session.rollback()
+        logger.exception("Integrity error while upserting current draft for user '%s'", user["user_id"])
+        raise HTTPException(
+            status_code=500,
+            detail=f"Integrity error while saving draft: {str(exc)}",
+        ) from exc
     except Exception as exc:  # noqa: BLE001
         session.rollback()
         logger.exception("Failed to upsert current draft for user '%s'", user["user_id"])
         raise HTTPException(
             status_code=500,
-            detail="Unable to save assignment draft right now.",
+            detail=f"Unable to save assignment draft right now: {str(exc)}",
         ) from exc
 
 
@@ -115,12 +122,19 @@ def delete_current_assignment_draft(
         session.delete(draft)
         session.commit()
         return {"message": "Draft deleted successfully."}
+    except IntegrityError as exc:
+        session.rollback()
+        logger.exception("Integrity error while deleting current draft for user '%s'", user["user_id"])
+        raise HTTPException(
+            status_code=500,
+            detail=f"Integrity error while deleting draft: {str(exc)}",
+        ) from exc
     except Exception as exc:  # noqa: BLE001
         session.rollback()
         logger.exception("Failed to delete current draft for user '%s'", user["user_id"])
         raise HTTPException(
             status_code=500,
-            detail="Unable to delete draft right now.",
+            detail=f"Unable to delete draft right now: {str(exc)}",
         ) from exc
 
 
@@ -146,12 +160,19 @@ def create_assignment_draft(
     except HTTPException:
         session.rollback()
         raise
+    except IntegrityError as exc:
+        session.rollback()
+        logger.exception("Integrity error while creating draft for user '%s'", user["user_id"])
+        raise HTTPException(
+            status_code=500,
+            detail=f"Integrity error while creating draft: {str(exc)}",
+        ) from exc
     except Exception as exc:  # noqa: BLE001
         session.rollback()
         logger.exception("Failed to create assignment draft for user '%s'", user["user_id"])
         raise HTTPException(
             status_code=500,
-            detail="Unable to save assignment draft right now.",
+            detail=f"Unable to save assignment draft right now: {str(exc)}",
         ) from exc
 
 
@@ -196,12 +217,19 @@ def update_assignment_draft(
     except HTTPException:
         session.rollback()
         raise
+    except IntegrityError as exc:
+        session.rollback()
+        logger.exception("Integrity error while updating assignment draft '%s'", draft_id)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Integrity error while updating draft: {str(exc)}",
+        ) from exc
     except Exception as exc:  # noqa: BLE001
         session.rollback()
         logger.exception("Failed to update assignment draft '%s'", draft_id)
         raise HTTPException(
             status_code=500,
-            detail="Unable to update assignment draft right now.",
+            detail=f"Unable to update assignment draft right now: {str(exc)}",
         ) from exc
 
 
@@ -223,10 +251,20 @@ def delete_assignment_draft(
         session.delete(draft)
         session.commit()
         return {"message": "Draft deleted successfully."}
+    except IntegrityError as exc:
+        session.rollback()
+        logger.exception("Integrity error while deleting draft '%s'", draft_id)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Integrity error while deleting draft: {str(exc)}",
+        ) from exc
     except Exception as exc:  # noqa: BLE001
         session.rollback()
         logger.exception("Failed to delete draft '%s': %s", draft_id, exc)
-        raise HTTPException(status_code=500, detail="Unable to delete draft right now.") from exc
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to delete draft right now: {str(exc)}",
+        ) from exc
 
 
 # ----------------------------------------------------------
@@ -244,6 +282,10 @@ def create_assignment(
 
         data = payload.model_dump(exclude_none=True, exclude={"draft_id", "owner_id"})
         data["owner_id"] = user["user_id"]
+
+        logger.info("Creating assignment for user_id=%s", user["user_id"])
+        logger.info("Assignment payload keys=%s", list(data.keys()))
+        logger.info("Questions type=%s", type(data.get("questions")).__name__)
 
         draft_to_delete = None
         if draft_id:
@@ -267,12 +309,26 @@ def create_assignment(
     except HTTPException:
         session.rollback()
         raise
+    except IntegrityError as exc:
+        session.rollback()
+        logger.exception("Integrity error while creating assignment")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Integrity error while creating assignment: {str(exc)}",
+        ) from exc
+    except SQLAlchemyError as exc:
+        session.rollback()
+        logger.exception("SQLAlchemy error while creating assignment")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error while creating assignment: {str(exc)}",
+        ) from exc
     except Exception as exc:  # noqa: BLE001
         session.rollback()
         logger.exception("Failed to create assignment titled '%s'", payload.title)
         raise HTTPException(
             status_code=500,
-            detail="Unable to create assignment right now.",
+            detail=f"Unable to create assignment right now: {str(exc)}",
         ) from exc
 
 
@@ -362,7 +418,7 @@ def delete_assignment(
         )
         raise HTTPException(
             status_code=500,
-            detail="Unable to delete assignment right now.",
+            detail=f"Unable to delete assignment right now: {str(exc)}",
         ) from exc
 
     return {
