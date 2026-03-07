@@ -18,18 +18,21 @@ class UserCreate(BaseModel):
     """Model for user registration/login"""
     email: str
     password: str
-    name: Optional[str] = None  # ← ADDED THIS LINE
+    name: Optional[str] = None
+
 
 class UserLogin(BaseModel):
     """Model for user login payload"""
     email: str
     password: str
 
+
 class UserResponse(BaseModel):
     """Model for returning user data (without password)"""
     id: str
     email: str
     role: str
+
 
 class Token(BaseModel):
     """Model for JWT token response"""
@@ -48,10 +51,9 @@ class User(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     email: str = Field(unique=True, index=True)
     password_hash: str
-    role: str = "instructor"  # 'instructor' or 'student' (future use)
+    role: str = "instructor"
     name: Optional[str] = None
 
-    # Relationship: one instructor → many assignments
     assignments: List["Assignment"] = Relationship(back_populates="owner")
     drafts: List["AssignmentDraft"] = Relationship(back_populates="owner")
 
@@ -66,23 +68,26 @@ class Assignment(SQLModel, table=True):
     """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+
     title: str
     description: Optional[str] = None
     dueDate: Optional[str] = None
     isQuiz: bool = False
-    assignmentTimeLimit: Optional[int] = None  # in seconds (for quizzes/tests)
+    assignmentTimeLimit: Optional[int] = None
 
-    # Full question data (JSON)
-    questions: dict = Field(sa_column=Column(JSON))
+    # IMPORTANT FIX
+    # frontend sends questions as a list
+    questions: dict | list = Field(sa_column=Column(JSON))
 
-    # Relationship to the instructor (owner)
     owner_id: Optional[str] = Field(default=None, foreign_key="user.id")
     owner: Optional[User] = Relationship(back_populates="assignments")
 
-    # Relationship to student responses
     responses: List["Response"] = Relationship(
         back_populates="assignment",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan", "passive_deletes": True},
+        sa_relationship_kwargs={
+            "cascade": "all, delete-orphan",
+            "passive_deletes": True,
+        },
     )
 
     model_config = {"arbitrary_types_allowed": True}
@@ -95,8 +100,10 @@ class AssignmentDraft(SQLModel, table=True):
     """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+
     title: Optional[str] = None
     description: Optional[str] = None
+
     questions: dict | list | None = Field(default=None, sa_column=Column(JSON))
 
     owner_id: str = Field(foreign_key="user.id", index=True)
@@ -116,6 +123,7 @@ class Response(SQLModel, table=True):
     """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+
     assignment_id: str = Field(
         sa_column=Column(
             String,
@@ -123,19 +131,22 @@ class Response(SQLModel, table=True):
             nullable=False,
         ),
     )
+
     studentName: str
     jNumber: str
 
-    # Store answers and transcripts as JSON
     answers: dict = Field(sa_column=Column(JSON))
     transcripts: dict = Field(sa_column=Column(JSON))
+
     audio_file_url: Optional[str] = None
+
     student_accuracy_rating: Optional[int] = Field(
         default=None,
         ge=1,
         le=5,
         description="Student provided rating (1-5) for transcript accuracy.",
     )
+
     student_rating_comment: Optional[str] = Field(
         default=None,
         sa_column=Column(Text),
@@ -143,9 +154,9 @@ class Response(SQLModel, table=True):
     )
 
     submittedAt: datetime = Field(default_factory=datetime.utcnow)
-    grade: Optional[float] = None  # optional instructor-assigned grade
 
-    # Relationship back to Assignment
+    grade: Optional[float] = None
+
     assignment: Optional[Assignment] = Relationship(
         back_populates="responses",
         sa_relationship_kwargs={"passive_deletes": True},
@@ -161,6 +172,7 @@ class AccuracyRating(SQLModel, table=True):
     """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+
     response_id: str = Field(
         sa_column=Column(
             String,
@@ -169,9 +181,12 @@ class AccuracyRating(SQLModel, table=True):
             unique=True,
         ),
     )
+
     rating: int = Field(default=5, ge=1, le=5)
+
     bias_notes: Optional[str] = None
     needs_review: bool = Field(default=False)
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
