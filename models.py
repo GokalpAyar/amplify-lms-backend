@@ -5,44 +5,57 @@
 # Compatible with FastAPI + SQLAlchemy + Pydantic v2
 # ==========================================================
 
-from sqlmodel import SQLModel, Field, Column, JSON, Relationship
-from sqlalchemy import ForeignKey, String, Text
 from datetime import datetime
 from typing import List, Optional
 import uuid
+
 from pydantic import BaseModel
+from sqlalchemy import Column, ForeignKey, JSON, String, Text
+from sqlmodel import Field, Relationship, SQLModel
 
 
-# ---------------------- Pydantic Models for API ----------------------
+# ==========================================================
+# Pydantic Models for API Auth
+# ==========================================================
 class UserCreate(BaseModel):
+    """Model for user registration/login."""
     email: str
     password: str
     name: Optional[str] = None
 
 
 class UserLogin(BaseModel):
+    """Model for user login payload."""
     email: str
     password: str
 
 
 class UserResponse(BaseModel):
+    """Model for returning user data (without password)."""
     id: str
     email: str
     role: str
 
 
 class Token(BaseModel):
+    """Model for JWT token response."""
     access_token: str
     token_type: str
     user: UserResponse
 
 
-# ---------------------- User Model ----------------------
+# ==========================================================
+# Legacy Local User Model
+# ==========================================================
 class User(SQLModel, table=True):
     """
     Legacy/local user table.
-    Supabase auth is used for instructor authentication now.
+
+    Supabase auth is now used for instructor authentication, but this table
+    may still exist for older parts of the system.
     """
+
+    __table_args__ = {"extend_existing": True}
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
     email: str = Field(unique=True, index=True)
@@ -53,12 +66,19 @@ class User(SQLModel, table=True):
     model_config = {"arbitrary_types_allowed": True}
 
 
-# ---------------------- Assignment Model ----------------------
+# ==========================================================
+# Assignment Model
+# ==========================================================
 class Assignment(SQLModel, table=True):
     """
     Stores teacher-created assignments with metadata and questions.
+
+    IMPORTANT:
     owner_id stores the Supabase user id directly.
+    It is NOT a foreign key to the local user table anymore.
     """
+
+    __table_args__ = {"extend_existing": True}
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
 
@@ -68,11 +88,10 @@ class Assignment(SQLModel, table=True):
     isQuiz: bool = False
     assignmentTimeLimit: Optional[int] = None
 
-    # frontend sends questions as a list
+    # Frontend sends questions as a list of question objects
     questions: dict | list = Field(sa_column=Column(JSON))
 
-    # IMPORTANT:
-    # no foreign key to local user table
+    # Store Supabase user id directly
     owner_id: Optional[str] = Field(default=None, index=True)
 
     responses: List["Response"] = Relationship(
@@ -86,12 +105,19 @@ class Assignment(SQLModel, table=True):
     model_config = {"arbitrary_types_allowed": True}
 
 
-# ---------------------- Assignment Draft Model ----------------------
+# ==========================================================
+# Assignment Draft Model
+# ==========================================================
 class AssignmentDraft(SQLModel, table=True):
     """
-    Stores in-progress assignments so instructors don't lose work mid-creation.
+    Stores in-progress assignments so instructors do not lose work mid-creation.
+
+    IMPORTANT:
     owner_id stores the Supabase user id directly.
+    It is NOT a foreign key to the local user table anymore.
     """
+
+    __table_args__ = {"extend_existing": True}
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
 
@@ -99,8 +125,6 @@ class AssignmentDraft(SQLModel, table=True):
     description: Optional[str] = None
     questions: dict | list | None = Field(default=None, sa_column=Column(JSON))
 
-    # IMPORTANT:
-    # no foreign key to local user table
     owner_id: str = Field(index=True)
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -109,12 +133,16 @@ class AssignmentDraft(SQLModel, table=True):
     model_config = {"arbitrary_types_allowed": True}
 
 
-# ---------------------- Response Model ----------------------
+# ==========================================================
+# Student Response Model
+# ==========================================================
 class Response(SQLModel, table=True):
     """
     Stores each student's submission and grading info.
     Linked to Assignment for instructor-level filtering.
     """
+
+    __table_args__ = {"extend_existing": True}
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
 
@@ -129,8 +157,10 @@ class Response(SQLModel, table=True):
     studentName: str
     jNumber: str
 
+    # Store answers and transcripts as JSON
     answers: dict = Field(sa_column=Column(JSON))
     transcripts: dict = Field(sa_column=Column(JSON))
+
     audio_file_url: Optional[str] = None
 
     student_accuracy_rating: Optional[int] = Field(
@@ -157,11 +187,15 @@ class Response(SQLModel, table=True):
     model_config = {"arbitrary_types_allowed": True}
 
 
-# ---------------------- Response Accuracy Rating ----------------------
+# ==========================================================
+# Response Accuracy Rating Model
+# ==========================================================
 class AccuracyRating(SQLModel, table=True):
     """
     Stores transcription accuracy reviews keyed by response.
     """
+
+    __table_args__ = {"extend_existing": True}
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
 
