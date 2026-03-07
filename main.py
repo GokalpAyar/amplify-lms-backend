@@ -19,9 +19,10 @@ from routes import assignments, auth, responses, speech
 _BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(dotenv_path=_BASE_DIR / ".env")
 
-DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() in {"1", "true", "yes", "on"}
-
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+DEMO_MODE = os.getenv("DEMO_MODE", "true").lower() in {"1", "true", "yes", "on"}
 
 app = FastAPI(
     title="Amplify LMS Backend",
@@ -30,25 +31,39 @@ app = FastAPI(
 )
 
 # -------------------------------------------------------------------
-# CORS (IMPORTANT for Vercel + Supabase login)
+# CORS (IMPORTANT for Vercel + Supabase Bearer-token auth)
 # -------------------------------------------------------------------
-# Set this in Render:
-# FRONTEND_ORIGINS=https://amplify-lms-frontend.vercel.app
-#
-# You can also include dev origins:
+# Render env examples:
 # FRONTEND_ORIGINS=https://amplify-lms-frontend.vercel.app,http://localhost:5173,http://localhost:3000
+# FRONTEND_ORIGIN=https://amplify-lms-frontend.vercel.app
+# FRONTEND_ORIGIN_REGEX=https://.*\.vercel\.app
+#
+# IMPORTANT:
+# - no quotes
+# - no trailing slash
 #
 FRONTEND_ORIGINS = os.getenv(
     "FRONTEND_ORIGINS",
     "https://amplify-lms-frontend.vercel.app,http://localhost:5173,http://localhost:3000",
 )
+FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "").strip()
+FRONTEND_ORIGIN_REGEX = os.getenv("FRONTEND_ORIGIN_REGEX", "").strip()
 
 allowed_origins = [o.strip() for o in FRONTEND_ORIGINS.split(",") if o.strip()]
+if FRONTEND_ORIGIN and FRONTEND_ORIGIN not in allowed_origins:
+    allowed_origins.append(FRONTEND_ORIGIN)
+
+logger.info("CORS allowed origins: %s", allowed_origins)
+logger.info(
+    "CORS allowed origin regex: %s",
+    FRONTEND_ORIGIN_REGEX if FRONTEND_ORIGIN_REGEX else "(none)",
+)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_credentials=False,  # required if your frontend uses cookies/session; still OK with Bearer tokens
+    allow_origin_regex=FRONTEND_ORIGIN_REGEX or None,
+    allow_credentials=False,  # Bearer token auth, not cookie auth
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -125,4 +140,3 @@ def root():
         "message": "Amplify LMS API running.",
         "docs": "/docs",
     }
-
