@@ -29,7 +29,103 @@ router = APIRouter(prefix="/assignments", tags=["assignments"])
 
 
 # ----------------------------------------------------------
-# Draft Endpoints (Instructor-only)
+# Draft Endpoints (Frontend-compatible single-current-draft)
+# ----------------------------------------------------------
+@router.get("/draft", response_model=AssignmentDraftOut)
+def get_current_assignment_draft(
+    session: Session = Depends(get_session),
+    user=Depends(get_current_instructor),
+):
+    """Return the most recently updated draft for the logged-in instructor."""
+    draft = session.exec(
+        select(AssignmentDraft)
+        .where(AssignmentDraft.owner_id == user["user_id"])
+        .order_by(AssignmentDraft.updated_at.desc())
+    ).first()
+
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    return draft
+
+
+@router.put("/draft", response_model=AssignmentDraftOut)
+def upsert_current_assignment_draft(
+    payload: AssignmentDraftUpdate,
+    session: Session = Depends(get_session),
+    user=Depends(get_current_instructor),
+):
+    """
+    Create or update the current instructor's draft.
+    This matches the frontend autosave behavior.
+    """
+    draft = session.exec(
+        select(AssignmentDraft)
+        .where(AssignmentDraft.owner_id == user["user_id"])
+        .order_by(AssignmentDraft.updated_at.desc())
+    ).first()
+
+    try:
+        if not draft:
+            draft = AssignmentDraft(
+                owner_id=user["user_id"],
+                title=payload.title,
+                description=payload.description,
+                questions=payload.questions,
+            )
+        else:
+            update_data = payload.model_dump(exclude_unset=True, exclude={"owner_id"})
+            for key, value in update_data.items():
+                setattr(draft, key, value)
+            draft.updated_at = datetime.utcnow()
+
+        session.add(draft)
+        session.commit()
+        session.refresh(draft)
+        return draft
+
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        logger.exception("Failed to upsert current draft for user '%s'", user["user_id"])
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to save assignment draft right now.",
+        ) from exc
+
+
+@router.delete("/draft")
+def delete_current_assignment_draft(
+    session: Session = Depends(get_session),
+    user=Depends(get_current_instructor),
+):
+    """Delete the most recently updated draft for the logged-in instructor."""
+    draft = session.exec(
+        select(AssignmentDraft)
+        .where(AssignmentDraft.owner_id == user["user_id"])
+        .order_by(AssignmentDraft.updated_at.desc())
+    ).first()
+
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+
+    try:
+        session.delete(draft)
+        session.commit()
+        return {"message": "Draft deleted successfully."}
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        logger.exception("Failed to delete current draft for user '%s'", user["user_id"])
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to delete draft right now.",
+        ) from exc
+
+
+# ----------------------------------------------------------
+# Optional multi-draft Endpoints (keep for future flexibility)
 # ----------------------------------------------------------
 @router.post("/drafts", response_model=AssignmentDraftOut, status_code=201)
 def create_assignment_draft(
@@ -39,7 +135,6 @@ def create_assignment_draft(
 ):
     """Create a new assignment draft for the logged-in instructor."""
     try:
-        # NEVER trust owner_id from client
         data = payload.model_dump(exclude_none=True, exclude={"owner_id"})
         data["owner_id"] = user["user_id"]
 
@@ -79,16 +174,14 @@ def update_assignment_draft(
     session: Session = Depends(get_session),
     user=Depends(get_current_instructor),
 ):
-    """Update mutable fields on a draft. Used by 30-second auto-save."""
+    """Update mutable fields on a specific draft."""
     draft = session.get(AssignmentDraft, draft_id)
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
 
-    # 🔒 Only owner can update
     if str(draft.owner_id) != user["user_id"]:
         raise HTTPException(status_code=403, detail="Not allowed to update this draft")
 
-    # Do not allow changing ownership
     update_data = payload.model_dump(exclude_unset=True, exclude={"owner_id"})
     if update_data:
         for key, value in update_data.items():
@@ -118,7 +211,7 @@ def delete_assignment_draft(
     session: Session = Depends(get_session),
     user=Depends(get_current_instructor),
 ):
-    """Delete a draft (instructor-only)."""
+    """Delete a specific draft (instructor-only)."""
     draft = session.get(AssignmentDraft, draft_id)
     if not draft:
         raise HTTPException(status_code=404, detail="Draft not found")
@@ -149,7 +242,6 @@ def create_assignment(
     try:
         draft_id = payload.draft_id
 
-        # NEVER trust owner_id from client
         data = payload.model_dump(exclude_none=True, exclude={"draft_id", "owner_id"})
         data["owner_id"] = user["user_id"]
 
@@ -159,7 +251,6 @@ def create_assignment(
             if not draft_to_delete:
                 raise HTTPException(status_code=404, detail="Draft not found")
 
-            # draft must belong to logged-in instructor
             if str(draft_to_delete.owner_id) != user["user_id"]:
                 raise HTTPException(status_code=403, detail="Draft does not belong to you.")
 
@@ -206,7 +297,6 @@ def delete_assignment(
     if not assignment:
         raise HTTPException(status_code=404, detail="Assignment not found")
 
-    # 🔒 Ownership check
     if str(assignment.owner_id) != user["user_id"]:
         raise HTTPException(status_code=403, detail="Not allowed to delete this assignment")
 
@@ -228,7 +318,7 @@ def delete_assignment(
         for response in responses:
             session.delete(response)
 
-        session.flush()  # ensure responses are removed before deleting assignment
+        session.flush()
         session.delete(assignment)
         session.commit()
 
