@@ -14,6 +14,7 @@ from sqlalchemy import inspect, text
 from sqlmodel import SQLModel
 
 from db import engine
+import models  # noqa: F401 - registers SQLModel tables for create_all
 from routes import assignments, auth, responses, speech
 
 _BASE_DIR = Path(__file__).resolve().parent

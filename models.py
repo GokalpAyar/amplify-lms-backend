@@ -183,6 +183,60 @@ class Response(SQLModel, table=True):
         back_populates="responses",
         sa_relationship_kwargs={"passive_deletes": True},
     )
+    grading_result: Optional["GradingResult"] = Relationship(
+        back_populates="response",
+        sa_relationship_kwargs={
+            "cascade": "all, delete-orphan",
+            "uselist": False,
+            "passive_deletes": True,
+        },
+    )
+
+    model_config = {"arbitrary_types_allowed": True}
+
+
+# ==========================================================
+# Automatic Grading Result Model
+# ==========================================================
+class GradingResult(SQLModel, table=True):
+    """
+    Stores automatic grading output for a student response.
+
+    Instructor-approved final grades stay on Response.grade.
+    """
+
+    __table_args__ = {"extend_existing": True}
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()), primary_key=True)
+
+    response_id: str = Field(
+        sa_column=Column(
+            String,
+            ForeignKey("response.id", ondelete="CASCADE"),
+            nullable=False,
+            unique=True,
+            index=True,
+        ),
+    )
+
+    status: str = Field(default="pending", index=True)
+    total_score: Optional[float] = None
+    max_score: Optional[float] = None
+    percentage: Optional[float] = None
+
+    question_results: dict | list = Field(default_factory=list, sa_column=Column(JSON))
+    summary_feedback: Optional[str] = Field(default=None, sa_column=Column(Text))
+    error_message: Optional[str] = Field(default=None, sa_column=Column(Text))
+    grader_version: Optional[str] = None
+
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    reviewed_at: Optional[datetime] = None
+    approved_at: Optional[datetime] = None
+    approved_score: Optional[float] = None
+    approved_by: Optional[str] = None
+
+    response: Optional[Response] = Relationship(back_populates="grading_result")
 
     model_config = {"arbitrary_types_allowed": True}
 

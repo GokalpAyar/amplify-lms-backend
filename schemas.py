@@ -89,6 +89,34 @@ class ResponseOut(ResponseCreate):
         orm_mode = True
 
 
+# ---------------------- Automatic Grading Schemas ----------------------
+class GradingResultOut(BaseModel):
+    id: str
+    response_id: str
+    status: str
+    total_score: Optional[float] = None
+    max_score: Optional[float] = None
+    percentage: Optional[float] = None
+    question_results: Dict[str, Any] | List[Any]
+    summary_feedback: Optional[str] = None
+    error_message: Optional[str] = None
+    grader_version: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    reviewed_at: Optional[datetime] = None
+    approved_at: Optional[datetime] = None
+    approved_score: Optional[float] = None
+    approved_by: Optional[str] = None
+
+    class Config:
+        orm_mode = True
+
+
+class GradingReviewPayload(BaseModel):
+    approved_score: float = Field(ge=0)
+    approved: bool = True
+
+
 class AccuracyRatingPayload(BaseModel):
     rating: int = Field(ge=1, le=5)
     bias_notes: Optional[str] = None

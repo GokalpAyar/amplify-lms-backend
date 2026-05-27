@@ -14,14 +14,17 @@ from sqlmodel import Session, select
 from starlette.datastructures import FormData
 
 from db import get_session
-from models import AccuracyRating, Assignment, Response
+from models import AccuracyRating, Assignment, GradingResult, Response
 from schemas import (
     AccuracyRatingOut,
     AccuracyRatingPayload,
+    GradingResultOut,
+    GradingReviewPayload,
     ResponseCreate,
     ResponseOut,
     StudentAccuracyRatingPayload,
 )
+from services.auto_grader import grade_saved_response
 from supabase_auth import get_current_instructor
 
 logger = logging.getLogger(__name__)
@@ -126,6 +129,78 @@ def list_responses(
     except Exception as exc:  # noqa: BLE001
         logger.exception("Failed to list responses for user %s: %s", user["user_id"], exc)
         raise HTTPException(status_code=500, detail="Unable to list responses right now.") from exc
+
+
+@router.post("/{response_id}/grade", response_model=GradingResultOut)
+def grade_response(
+    response_id: str,
+    session: Session = Depends(get_session),
+    user=Depends(get_current_instructor),
+):
+    """Run automatic grading for one response (instructor-only)."""
+
+    _get_response_for_instructor(session, response_id, user)
+    return grade_saved_response(session, response_id)
+
+
+@router.get("/{response_id}/grading-result", response_model=GradingResultOut)
+def get_grading_result(
+    response_id: str,
+    session: Session = Depends(get_session),
+    user=Depends(get_current_instructor),
+):
+    """Fetch the saved automatic grading result for one response."""
+
+    _get_response_for_instructor(session, response_id, user)
+    grading_result = session.exec(
+        select(GradingResult).where(GradingResult.response_id == response_id)
+    ).first()
+    if not grading_result:
+        raise HTTPException(status_code=404, detail="Grading result not found")
+    return grading_result
+
+
+@router.post("/{response_id}/grading-result/review", response_model=GradingResultOut)
+def review_grading_result(
+    response_id: str,
+    payload: GradingReviewPayload,
+    session: Session = Depends(get_session),
+    user=Depends(get_current_instructor),
+):
+    """Review an automatic grading result and optionally approve its score."""
+
+    response = _get_response_for_instructor(session, response_id, user)
+    grading_result = session.exec(
+        select(GradingResult).where(GradingResult.response_id == response_id)
+    ).first()
+    if not grading_result:
+        raise HTTPException(status_code=404, detail="Grading result not found")
+
+    now = datetime.utcnow()
+    grading_result.reviewed_at = now
+    grading_result.approved_score = payload.approved_score
+
+    if payload.approved:
+        grading_result.status = "approved"
+        grading_result.approved_at = now
+        response.grade = payload.approved_score
+        session.add(response)
+    else:
+        grading_result.status = "reviewed"
+        grading_result.approved_at = None
+
+    try:
+        session.add(grading_result)
+        session.commit()
+        session.refresh(grading_result)
+        return grading_result
+    except Exception as exc:  # noqa: BLE001
+        session.rollback()
+        logger.exception("Failed to review grading result for %s: %s", response_id, exc)
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to review grading result right now.",
+        ) from exc
 
 
 @router.get("/{assignment_id}", response_model=list[ResponseOut])
@@ -243,6 +318,25 @@ def update_student_accuracy_rating(
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+def _get_response_for_instructor(
+    session: Session,
+    response_id: str,
+    user: dict[str, Any],
+) -> Response:
+    response = session.get(Response, response_id)
+    if not response:
+        raise HTTPException(status_code=404, detail="Response not found")
+
+    assignment = session.get(Assignment, response.assignment_id)
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    if str(assignment.owner_id) != user["user_id"]:
+        raise HTTPException(status_code=403, detail="Not allowed")
+
+    return response
+
+
 async def _extract_payload(request: Request) -> ResponseCreate:
     content_type = (request.headers.get("content-type") or "").lower()
     if "multipart/form-data" in content_type:

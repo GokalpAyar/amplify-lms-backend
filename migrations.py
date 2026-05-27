@@ -1,8 +1,9 @@
 # migrate.py
 from sqlalchemy import inspect
-from sqlmodel import Session, text
+from sqlmodel import SQLModel, Session, text
 
 from db import engine
+import models  # noqa: F401 - registers SQLModel tables for create_all
 
 
 def _ensure_column(session: Session, table: str, column: str, column_type: str) -> None:
@@ -26,8 +27,14 @@ def _add_response_student_accuracy_columns(session: Session) -> None:
     _ensure_column(session, "response", "student_rating_comment", "TEXT")
 
 
+def _ensure_tables() -> None:
+    SQLModel.metadata.create_all(engine)
+
+
 def migrate_database() -> None:
     """Add any missing columns required by the latest models."""
+    _ensure_tables()
+
     with Session(engine) as session:
         try:
             _add_assignment_time_limit(session)
