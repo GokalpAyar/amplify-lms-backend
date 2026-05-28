@@ -7,13 +7,13 @@ import logging
 from datetime import datetime
 from typing import Any, Sequence
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from jose import JWTError
 from pydantic import ValidationError
 from sqlmodel import Session, select
 from starlette.datastructures import FormData
 
-from db import get_session
+from db import engine, get_session
 from models import AccuracyRating, Assignment, GradingResult, Response
 from schemas import (
     AccuracyRatingOut,
@@ -38,6 +38,7 @@ router = APIRouter(prefix="/responses", tags=["responses"])
 @router.post("/", response_model=ResponseOut)
 async def create_response(
     request: Request,
+    background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
 ):
     """Create a new student response without persisting audio attachments.
@@ -83,6 +84,7 @@ async def create_response(
             payload.assignment_id,
             payload.studentName,
         )
+        background_tasks.add_task(_auto_grade_response_after_submit, response.id)
 
         return _serialize_response(response)
     except HTTPException:
@@ -183,11 +185,13 @@ def review_grading_result(
     if payload.approved:
         grading_result.status = "approved"
         grading_result.approved_at = now
+        grading_result.approved_by = user["user_id"]
         response.grade = payload.approved_score
         session.add(response)
     else:
         grading_result.status = "reviewed"
         grading_result.approved_at = None
+        grading_result.approved_by = None
 
     try:
         session.add(grading_result)
@@ -227,6 +231,35 @@ def get_responses_for_assignment(
     ).all()
 
     return _serialize_response_list(responses)
+
+
+def _auto_grade_response_after_submit(response_id: str) -> None:
+    """Run grading after submission without making student submission depend on it."""
+
+    try:
+        with Session(engine) as grading_session:
+            existing_result = grading_session.exec(
+                select(GradingResult).where(GradingResult.response_id == response_id)
+            ).first()
+            if existing_result:
+                logger.info(
+                    "Skipping automatic grading for response %s; result already exists.",
+                    response_id,
+                )
+                return
+
+            result = grade_saved_response(grading_session, response_id)
+            logger.info(
+                "Automatic grading finished for response %s with status %s.",
+                response_id,
+                result.status,
+            )
+    except Exception as exc:  # noqa: BLE001 - grading must never break submissions
+        logger.exception(
+            "Automatic grading task failed for response %s: %s",
+            response_id,
+            exc,
+        )
 
 
 @router.post("/{response_id}/accuracy-rating", response_model=AccuracyRatingOut)
