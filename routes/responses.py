@@ -7,7 +7,7 @@ import logging
 from datetime import datetime
 from typing import Any, Sequence
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Request
 from jose import JWTError
 from pydantic import ValidationError
 from sqlmodel import Session, select
@@ -18,6 +18,7 @@ from models import AccuracyRating, Assignment, GradingResult, Response
 from schemas import (
     AccuracyRatingOut,
     AccuracyRatingPayload,
+    GradingRequestPayload,
     GradingResultOut,
     GradingReviewPayload,
     ResponseCreate,
@@ -136,13 +137,28 @@ def list_responses(
 @router.post("/{response_id}/grade", response_model=GradingResultOut)
 def grade_response(
     response_id: str,
+    payload: GradingRequestPayload | None = Body(default=None),
     session: Session = Depends(get_session),
     user=Depends(get_current_instructor),
 ):
     """Run automatic grading for one response (instructor-only)."""
 
     _get_response_for_instructor(session, response_id, user)
-    return grade_saved_response(session, response_id)
+    existing_result = session.exec(
+        select(GradingResult).where(GradingResult.response_id == response_id)
+    ).first()
+
+    result = grade_saved_response(session, response_id)
+
+    if existing_result:
+        reason = payload.regrade_reason if payload else None
+        result.regrade_reason = reason.strip() if reason and reason.strip() else None
+        result.regraded_at = datetime.utcnow()
+        session.add(result)
+        session.commit()
+        session.refresh(result)
+
+    return result
 
 
 @router.get("/{response_id}/grading-result", response_model=GradingResultOut)
@@ -177,19 +193,26 @@ def review_grading_result(
     ).first()
     if not grading_result:
         raise HTTPException(status_code=404, detail="Grading result not found")
+    if payload.approved and payload.approved_score is None:
+        raise HTTPException(status_code=400, detail="Approved score is required.")
 
     now = datetime.utcnow()
     grading_result.reviewed_at = now
-    grading_result.approved_score = payload.approved_score
+    if payload.approved_score is not None:
+        grading_result.approved_score = payload.approved_score
+    if _payload_field_was_set(payload, "instructor_feedback"):
+        feedback = payload.instructor_feedback or ""
+        grading_result.instructor_feedback = feedback.strip() or None
 
     if payload.approved:
         grading_result.status = "approved"
         grading_result.approved_at = now
         grading_result.approved_by = user["user_id"]
-        response.grade = payload.approved_score
+        response.grade = grading_result.approved_score
         session.add(response)
     else:
-        grading_result.status = "reviewed"
+        if grading_result.status != "failed":
+            grading_result.status = "reviewed"
         grading_result.approved_at = None
         grading_result.approved_by = None
 
@@ -368,6 +391,13 @@ def _get_response_for_instructor(
         raise HTTPException(status_code=403, detail="Not allowed")
 
     return response
+
+
+def _payload_field_was_set(payload: GradingReviewPayload, field_name: str) -> bool:
+    fields_set = getattr(payload, "model_fields_set", None)
+    if fields_set is None:
+        fields_set = getattr(payload, "__fields_set__", set())
+    return field_name in fields_set
 
 
 async def _extract_payload(request: Request) -> ResponseCreate:

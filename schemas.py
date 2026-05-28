@@ -101,8 +101,11 @@ class GradingResultOut(BaseModel):
     summary_feedback: Optional[str] = None
     error_message: Optional[str] = None
     grader_version: Optional[str] = None
+    instructor_feedback: Optional[str] = None
+    regrade_reason: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    regraded_at: Optional[datetime] = None
     reviewed_at: Optional[datetime] = None
     approved_at: Optional[datetime] = None
     approved_score: Optional[float] = None
@@ -113,8 +116,13 @@ class GradingResultOut(BaseModel):
 
 
 class GradingReviewPayload(BaseModel):
-    approved_score: float = Field(ge=0)
+    approved_score: Optional[float] = Field(default=None, ge=0)
     approved: bool = True
+    instructor_feedback: Optional[str] = None
+
+
+class GradingRequestPayload(BaseModel):
+    regrade_reason: Optional[str] = None
 
 
 class AccuracyRatingPayload(BaseModel):

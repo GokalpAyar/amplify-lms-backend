@@ -228,9 +228,12 @@ class GradingResult(SQLModel, table=True):
     summary_feedback: Optional[str] = Field(default=None, sa_column=Column(Text))
     error_message: Optional[str] = Field(default=None, sa_column=Column(Text))
     grader_version: Optional[str] = None
+    instructor_feedback: Optional[str] = Field(default=None, sa_column=Column(Text))
+    regrade_reason: Optional[str] = Field(default=None, sa_column=Column(Text))
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
+    regraded_at: Optional[datetime] = None
     reviewed_at: Optional[datetime] = None
     approved_at: Optional[datetime] = None
     approved_score: Optional[float] = None

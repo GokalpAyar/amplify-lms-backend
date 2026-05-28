@@ -27,6 +27,12 @@ def _add_response_student_accuracy_columns(session: Session) -> None:
     _ensure_column(session, "response", "student_rating_comment", "TEXT")
 
 
+def _add_grading_workflow_columns(session: Session) -> None:
+    _ensure_column(session, "gradingresult", "instructor_feedback", "TEXT")
+    _ensure_column(session, "gradingresult", "regrade_reason", "TEXT")
+    _ensure_column(session, "gradingresult", "regraded_at", "TIMESTAMP")
+
+
 def _ensure_tables() -> None:
     SQLModel.metadata.create_all(engine)
 
@@ -39,6 +45,7 @@ def migrate_database() -> None:
         try:
             _add_assignment_time_limit(session)
             _add_response_student_accuracy_columns(session)
+            _add_grading_workflow_columns(session)
             session.commit()
         except Exception as exc:
             session.rollback()
