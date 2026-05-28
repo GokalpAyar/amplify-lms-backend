@@ -13,9 +13,31 @@ from models import Assignment, GradingResult, Response
 
 logger = logging.getLogger(__name__)
 
-GRADER_VERSION = "auto-grader-v1"
+GRADER_VERSION = "auto-grader-v2"
 GRADING_MODEL_ENV_KEYS = ("AUTO_GRADER_MODEL", "OPENAI_GRADING_MODEL", "OPENAI_MODEL")
 DEFAULT_GRADING_MODEL = "gpt-4o-mini"
+CONFIDENCE_REVIEW_THRESHOLD = 0.6
+VERY_SHORT_TRANSCRIPT_WORDS = 6
+UNCLEAR_TRANSCRIPT_MARKERS = (
+    "[inaudible",
+    "(inaudible",
+    "inaudible",
+    "[unclear",
+    "(unclear",
+    "unclear",
+    "unintelligible",
+    "can't hear",
+    "cannot hear",
+    "audio unclear",
+    "background noise",
+)
+TRANSCRIPT_UNAVAILABLE_MARKERS = (
+    "no speech detected",
+    "transcript unavailable",
+    "transcription unavailable",
+    "could not transcribe",
+    "unable to transcribe",
+)
 
 
 class AutoGradingError(RuntimeError):
@@ -73,11 +95,11 @@ def grade_saved_response(session: Session, response_id: str) -> GradingResult:
                 continue
 
             if question_type == "oral":
-                answer_text = _as_text(transcripts.get(question_id)) or _as_text(
-                    answers.get(question_id)
-                )
+                transcript_text = _as_text(transcripts.get(question_id))
+                answer_text = transcript_text or _as_text(answers.get(question_id))
                 source = "transcript"
             else:
+                transcript_text = ""
                 answer_text = _as_text(answers.get(question_id))
                 source = "answer"
 
@@ -85,6 +107,7 @@ def grade_saved_response(session: Session, response_id: str) -> GradingResult:
                 {
                     **normalized,
                     "answer_text": answer_text,
+                    "transcript_text": transcript_text,
                     "source": source,
                 }
             )
@@ -224,9 +247,13 @@ def _ungraded_ai_result(item: dict[str, Any], error_message: str) -> dict[str, A
         "points_possible": item["points_possible"],
         "auto_score": None,
         "feedback": error_message,
+        "strengths": "",
+        "missing_points": "Automatic grading could not be completed for this question.",
+        "confidence": 0.0,
         "source": item["source"],
         "grading_method": "ai",
         "needs_review": True,
+        "transcript_quality_flags": _transcript_quality_flags(item),
     }
 
 
@@ -236,6 +263,10 @@ def _grade_with_openai(
 ) -> tuple[list[dict[str, Any]], str]:
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+    transcript_quality_by_id = {
+        item["id"]: _transcript_quality_flags(item)
+        for item in ai_items
+    }
     payload = [
         {
             "question_id": item["id"],
@@ -244,9 +275,9 @@ def _grade_with_openai(
             "points_possible": item["points_possible"],
             "student_answer": item["answer_text"],
             "source": item["source"],
-            # Future rubric / expected-answer fields belong here. The current
-            # assignment shape mostly has prompt + points, but if a teacher
-            # later adds rubric, criteria, or expectedAnswer, the model uses it.
+            "transcript_quality_notes": transcript_quality_by_id[item["id"]],
+            # Teacher-authored guidance belongs here. Rubric is the main source
+            # for partial credit; expected_answer gives the model an anchor.
             "rubric": item.get("rubric"),
             "expected_answer": item.get("expected_answer"),
         }
@@ -261,11 +292,27 @@ def _grade_with_openai(
                 {
                     "role": "system",
                     "content": (
-                        "You are an instructor grading student answers. Return only JSON "
-                        "with keys `results` and `summary_feedback`. Each result must include "
-                        "`question_id`, `auto_score`, and `feedback`. Scores must be between "
-                        "0 and points_possible. Use the rubric or expected_answer when present; "
-                        "otherwise grade for correctness, relevance, and completeness."
+                        "You are a careful instructor grading saved student answers for an LMS. "
+                        "Grade only from the evidence provided. Evaluate correctness, "
+                        "completeness, reasoning quality, rubric adherence, and expected answer "
+                        "alignment. Use this precedence: first rubric criteria, then "
+                        "expected_answer, then the question prompt. Treat expected_answer as a "
+                        "target concept, not a requirement for identical wording. Award partial "
+                        "credit proportional to demonstrated evidence and keep every auto_score "
+                        "between 0 and points_possible. Do not give credit for unsupported or "
+                        "contradictory claims. For oral/transcript answers, grade the available "
+                        "content without penalizing accent or speech style, but lower confidence "
+                        "when transcript_quality_notes indicate an empty, very short, unclear, "
+                        "or suspicious transcript. If there is no gradable student content, the "
+                        "score should usually be 0 and confidence should be low. "
+                        "Confidence means reliability of the automatic grade, not student "
+                        "performance. Return only one JSON object with keys `results` and "
+                        "`summary_feedback`. Each result must have exactly these grading keys: "
+                        "`question_id`, `auto_score`, `feedback`, `strengths`, "
+                        "`missing_points`, and `confidence`. `confidence` must be a number "
+                        "from 0 to 1. Use confidence below 0.6 when the answer is ambiguous, "
+                        "the transcript is weak, or the grading guidance is insufficient. "
+                        "Do not include Markdown, code fences, or extra prose."
                     ),
                 },
                 {
@@ -293,6 +340,14 @@ def _grade_with_openai(
     for item in ai_items:
         raw = by_question_id.get(item["id"], {})
         score = _clamp_score(raw.get("auto_score"), item["points_possible"])
+        transcript_quality_flags = transcript_quality_by_id[item["id"]]
+        confidence = _clamp_confidence(raw.get("confidence"))
+        confidence = _adjust_confidence(
+            confidence=confidence,
+            item=item,
+            transcript_quality_flags=transcript_quality_flags,
+        )
+        needs_review = confidence < CONFIDENCE_REVIEW_THRESHOLD
         results.append(
             {
                 "question_id": item["id"],
@@ -300,9 +355,14 @@ def _grade_with_openai(
                 "points_possible": item["points_possible"],
                 "auto_score": score,
                 "feedback": _as_text(raw.get("feedback")) or "AI grading completed.",
+                "strengths": _as_text(raw.get("strengths")),
+                "missing_points": _as_text(raw.get("missing_points")),
+                "confidence": confidence,
+                "needs_review": needs_review,
                 "source": item["source"],
                 "grading_method": "ai",
                 "model": model_name,
+                "transcript_quality_flags": transcript_quality_flags,
             }
         )
 
@@ -365,7 +425,14 @@ def _normalize_questions(raw_questions: Any) -> list[dict[str, Any]]:
 def _normalize_question(question: dict[str, Any]) -> dict[str, Any]:
     question_id = _as_text(question.get("id")) or _as_text(question.get("question_id"))
     question_type = (_as_text(question.get("type")) or "short").lower()
-    points_possible = _as_float(question.get("points"), default=1.0)
+    points_possible = _as_float(
+        _first_present(
+            question.get("points"),
+            question.get("max_points"),
+            question.get("maxPoints"),
+        ),
+        default=1.0,
+    )
 
     return {
         **question,
@@ -405,6 +472,63 @@ def _resolve_correct_answer(question: dict[str, Any]) -> str | None:
     return None
 
 
+def _transcript_quality_flags(item: dict[str, Any]) -> list[str]:
+    if item.get("source") != "transcript" and item.get("type") != "oral":
+        return []
+
+    transcript_text = _as_text(item.get("transcript_text"))
+    if not transcript_text:
+        return ["empty transcript"]
+
+    flags: list[str] = []
+    normalized = transcript_text.casefold()
+    words = _words(transcript_text)
+
+    if any(marker in normalized for marker in TRANSCRIPT_UNAVAILABLE_MARKERS):
+        flags.append("transcription unavailable marker")
+    if len(words) < VERY_SHORT_TRANSCRIPT_WORDS:
+        flags.append("very short transcript")
+    if any(marker in normalized for marker in UNCLEAR_TRANSCRIPT_MARKERS):
+        flags.append("unclear transcript markers")
+    if "??" in transcript_text or transcript_text.count("?") >= 3:
+        flags.append("uncertain transcript text")
+    if len(words) >= 8:
+        unique_words = {word for word in words if word}
+        if unique_words and len(unique_words) / len(words) < 0.35:
+            flags.append("highly repetitive transcript")
+
+    return flags
+
+
+def _adjust_confidence(
+    *,
+    confidence: float,
+    item: dict[str, Any],
+    transcript_quality_flags: list[str],
+) -> float:
+    adjusted = confidence
+
+    if not _as_text(item.get("answer_text")):
+        adjusted = min(adjusted, 0.1)
+    if not item.get("rubric") and not item.get("expected_answer"):
+        adjusted = min(adjusted, 0.85)
+
+    flag_caps = {
+        "empty transcript": 0.1,
+        "transcription unavailable marker": 0.15,
+        "very short transcript": 0.45,
+        "unclear transcript markers": 0.5,
+        "uncertain transcript text": 0.55,
+        "highly repetitive transcript": 0.55,
+    }
+    for flag in transcript_quality_flags:
+        cap = flag_caps.get(flag)
+        if cap is not None:
+            adjusted = min(adjusted, cap)
+
+    return round(adjusted, 2)
+
+
 def _safe_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
@@ -432,6 +556,13 @@ def _first_text(*values: Any) -> str | None:
     return None
 
 
+def _first_present(*values: Any) -> Any:
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
 def _as_float(value: Any, *, default: float) -> float:
     try:
         parsed = float(value)
@@ -444,12 +575,28 @@ def _normalize_answer(value: Any) -> str:
     return " ".join(_as_text(value).casefold().split())
 
 
+def _words(value: str) -> list[str]:
+    return [
+        word.strip(".,!?;:()[]{}\"'").casefold()
+        for word in value.split()
+        if word.strip(".,!?;:()[]{}\"'")
+    ]
+
+
 def _clamp_score(value: Any, points_possible: float) -> float:
     try:
         score = float(value)
     except (TypeError, ValueError):
         return 0.0
     return max(0.0, min(points_possible, score))
+
+
+def _clamp_confidence(value: Any, *, default: float = 0.5) -> float:
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        confidence = default
+    return round(max(0.0, min(1.0, confidence)), 2)
 
 
 def _sum_scores(question_results: list[dict[str, Any]]) -> float:
