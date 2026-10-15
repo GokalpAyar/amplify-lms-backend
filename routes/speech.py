@@ -143,28 +143,3 @@ async def transcribe_audio(file: UploadFile = File(...)):
     Primary endpoint for Whisper transcription used by the Vercel deployment.
     """
     return await _transcribe_upload(file)
-
-
-@router.get("/debug/openai")
-async def debug_openai():
-    """
-    Debug endpoint to check OpenAI configuration
-    """
-    debug_info = {
-        "openai_api_key_set": bool(os.getenv("OPENAI_API_KEY")),
-        "openai_api_key_length": len(os.getenv("OPENAI_API_KEY", "")),
-        "openai_api_key_prefix": os.getenv("OPENAI_API_KEY", "")[:10] + "..." if os.getenv("OPENAI_API_KEY") else "None",
-        "whisper_model": _resolve_model_name(),
-        "whisper_env_vars": {key: os.getenv(key) for key in _WHISPER_ENV_KEYS}
-    }
-    
-    try:
-        client = _get_client()
-        # Test with a simple request
-        models = client.models.list()
-        debug_info["openai_connection"] = "success"
-        debug_info["models_available"] = len(models.data)
-    except Exception as e:
-        debug_info["openai_connection"] = f"failed: {e}"
-    
-    return debug_info
